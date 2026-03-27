@@ -935,7 +935,7 @@ def apply_to_jobs(search_terms: list[str]) -> None:
     current_city = current_city.strip()
     # Vary interaction tempo and cap run size to reduce aggressive behavior patterns.
     session_click_gap = round(uniform(1.2, 3.2), 1)
-    session_switch_cap = min(switch_number, 15)
+    session_switch_cap = min(switch_number, 6)   # Hard safety cap: never exceed 6/term regardless of config (30 total with 10 terms)
     print_lg(f"Session pacing: click_gap={session_click_gap}s, max applies/search={session_switch_cap}")
 
     if randomize_search_order:  shuffle(search_terms)
