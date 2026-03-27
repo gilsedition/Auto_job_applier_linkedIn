@@ -25,7 +25,7 @@ import pyautogui
 # Set CSV field size limit to prevent field size errors
 csv.field_size_limit(1000000)  # Set to 1MB instead of default 131KB
 
-from random import choice, shuffle, randint
+from random import choice, shuffle, randint, uniform
 from datetime import datetime
 
 from selenium.webdriver.common.by import By
@@ -98,6 +98,28 @@ aiClient = None
 ##> ------ Dheeraj Deshwal : dheeraj9811 Email:dheeraj20194@iiitd.ac.in/dheerajdeshwal9811@gmail.com - Feature ------
 about_company_for_ai = None # TODO extract about company for AI
 ##<
+
+
+def human_type(element: WebElement, text: str, min_delay: float = 0.03, max_delay: float = 0.12) -> None:
+    '''Type one character at a time with short random jitter.'''
+    for ch in text:
+        element.send_keys(ch)
+        sleep(uniform(min_delay, max_delay))
+
+
+def has_security_challenge() -> bool:
+    '''Detect common LinkedIn verification/challenge pages or captcha surfaces.'''
+    try:
+        cur_url = driver.current_url.lower()
+        if any(key in cur_url for key in ["checkpoint", "challenge", "captcha", "verify"]):
+            return True
+
+        challenge_banner = try_xp(driver, "//h1[contains(translate(., 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'security verification')]", False)
+        captcha_frame = try_xp(driver, "//iframe[contains(translate(@src, 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'captcha')]", False)
+        recaptcha = try_xp(driver, "//*[contains(@class, 'g-recaptcha') or contains(@id, 'recaptcha')]", False)
+        return bool(challenge_banner or captcha_frame or recaptcha)
+    except Exception:
+        return False
 
 #>
 
@@ -685,7 +707,7 @@ def answer_questions(modal: WebElement, questions_list: set, work_location: str,
                 max_length = text.get_attribute("maxlength")
                 if max_length and max_length.isdigit():
                     answer = answer[:int(max_length)]
-                text.send_keys(answer)
+                human_type(text, answer)
                 if do_actions:
                     sleep(2)
                     actions.send_keys(Keys.ARROW_DOWN)
@@ -734,7 +756,10 @@ def answer_questions(modal: WebElement, questions_list: set, work_location: str,
                 max_length = text_area.get_attribute("maxlength")
                 if max_length and max_length.isdigit():
                     answer = answer[:int(max_length)]
-                text_area.send_keys(answer)
+                # Keep textarea reasonably fast while avoiding single-shot paste.
+                for i in range(0, len(answer), 80):
+                    text_area.send_keys(answer[i:i+80])
+                    sleep(uniform(0.05, 0.18))
             if do_actions:
                     sleep(2)
                     actions.send_keys(Keys.ARROW_DOWN)
@@ -908,6 +933,10 @@ def apply_to_jobs(search_terms: list[str]) -> None:
     blacklisted_companies = set()
     global current_city, failed_count, skip_count, easy_applied_count, external_jobs_count, tabs_count, pause_before_submit, pause_at_failed_question, useNewResume
     current_city = current_city.strip()
+    # Vary interaction tempo and cap run size to reduce aggressive behavior patterns.
+    session_click_gap = round(uniform(1.2, 3.2), 1)
+    session_switch_cap = min(switch_number, 15)
+    print_lg(f"Session pacing: click_gap={session_click_gap}s, max applies/search={session_switch_cap}")
 
     if randomize_search_order:  shuffle(search_terms)
     for searchTerm in search_terms:
@@ -919,7 +948,11 @@ def apply_to_jobs(search_terms: list[str]) -> None:
 
         current_count = 0
         try:
-            while current_count < switch_number:
+            while current_count < session_switch_cap:
+                if has_security_challenge():
+                    print_lg("Security challenge detected. Pausing automation to protect account health.")
+                    sleep(randint(1800, 3600))
+                    return
                 # Wait until job listings are loaded
                 wait.until(EC.presence_of_all_elements_located((By.XPATH, "//li[@data-occludable-job-id]")))
 
@@ -932,7 +965,7 @@ def apply_to_jobs(search_terms: list[str]) -> None:
             
                 for job in job_listings:
                     if keep_screen_awake: pyautogui.press('shiftright')
-                    if current_count >= switch_number: break
+                    if current_count >= session_switch_cap: break
                     print_lg("\n-@-\n")
 
                     job_id,title,company,work_location,work_style,skip = get_job_main_details(job, blacklisted_companies, rejected_jobs)
@@ -945,6 +978,18 @@ def apply_to_jobs(search_terms: list[str]) -> None:
                             continue
                     except Exception as e:
                         print_lg(f'Trying to Apply to "{title} | {company}" job. Job ID: {job_id}')
+
+                    # Simulate reading behavior before interacting with Easy Apply.
+                    read_pause = uniform(12.0, 38.0)
+                    sleep(read_pause)
+                    if randint(1, 3) == 1:
+                        try:
+                            scroll_amount = randint(180, 520)
+                            driver.execute_script(f"window.scrollBy(0, {scroll_amount});")
+                            sleep(uniform(0.4, 1.2))
+                            driver.execute_script(f"window.scrollBy(0, -{scroll_amount});")
+                        except Exception:
+                            pass
 
                     job_link = "https://www.linkedin.com/jobs/view/"+job_id
                     application_link = "Easy Applied"
@@ -1088,9 +1133,12 @@ def apply_to_jobs(search_terms: list[str]) -> None:
                                 if wait_span_click(driver, "Submit application", 2, scrollTop=True): 
                                     date_applied = datetime.now()
                                     if not wait_span_click(driver, "Done", 2): actions.send_keys(Keys.ESCAPE).perform()
+                                    # Cooldown after submission to avoid bursty submit patterns.
+                                    sleep(uniform(8.0, 22.0))
                                 elif errored != "stuck" and cur_pause_before_submit and "Yes" in pyautogui.confirm("You submitted the application, didn't you 😒?", "Failed to find Submit Application!", ["Yes", "No"]):
                                     date_applied = datetime.now()
                                     wait_span_click(driver, "Done", 2)
+                                    sleep(uniform(8.0, 22.0))
                                 else:
                                     print_lg("Since, Submit Application failed, discarding the job application...")
                                     # if screenshot_name == "Not Available":  screenshot_name = screenshot(driver, job_id, "Failed to click Submit application")
