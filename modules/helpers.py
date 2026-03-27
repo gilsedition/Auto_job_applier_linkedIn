@@ -104,6 +104,26 @@ def find_default_profile_directory() -> str | None:
             return path_str
             
     return None
+
+
+def find_profile_folder_by_name(user_data_dir: str, profile_name: str) -> str | None:
+    '''
+    Finds a Chrome profile folder whose display name matches `profile_name`.
+    Reads from Chrome's "Local State" file which is the authoritative source for profile names.
+    Returns the folder name (e.g. "Default", "Profile 3") or None if not found.
+    '''
+    try:
+        local_state_path = os.path.join(user_data_dir, "Local State")
+        if os.path.isfile(local_state_path):
+            with open(local_state_path, "r", encoding="utf-8") as f:
+                local_state = json.load(f)
+            info_cache = local_state.get("profile", {}).get("info_cache", {})
+            for folder, info in info_cache.items():
+                if info.get("name", "").lower() == profile_name.lower():
+                    return folder
+    except Exception as e:
+        print_lg(f"Error scanning Chrome profiles: {e}")
+    return None
 #>
 
 

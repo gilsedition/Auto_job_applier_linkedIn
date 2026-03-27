@@ -433,6 +433,12 @@ def upload_resume(modal: WebElement, resume: str) -> tuple[bool, str]:
 # Function to answer common questions for Easy Apply
 def answer_common_questions(label: str, answer: str) -> str:
     if 'sponsorship' in label or 'visa' in label: answer = require_visa
+    elif any(phrase in label for phrase in ['living in', 'based in', 'reside in', 'residing in', 'located in', 'authorized to work in', 'allowed to work in', 'right to work in', 'permission to work in', 'eligible to work in', 'currently in', 'live in']):
+        # Also answer Yes for EU/EEA/Schengen/Europe questions (Sharon is in France = EU member)
+        eu_match = any(term in label for term in ['european union', 'europe', 'schengen', 'eea', ' eu ', ' eu?', ' eu.', 'eu/'])
+        answer = 'Yes' if current_country.lower() in label or eu_match else 'No'
+    elif 'english' in label and any(w in label for w in ['level', 'proficiency', 'fluent', 'speak', 'advanced', 'inglés', 'ingles']):
+        answer = 'Yes'
     return answer
 
 
@@ -473,12 +479,14 @@ def answer_questions(modal: WebElement, questions_list: set, work_location: str,
                     answer = gender
                 elif 'disability' in label: 
                     answer = disability_status
-                elif 'proficiency' in label: 
-                    answer = 'Professional'
+                elif 'proficiency' in label or 'proficiência' in label or 'nivel' in label or 'nível' in label: 
+                    answer = 'Native or Bilingual'
+                elif 'category' in label or 'function' in label or 'department' in label:
+                    answer = job_category
                 # Add location handling
                 elif any(loc_word in label for loc_word in ['location', 'city', 'state', 'country']):
                     if 'country' in label:
-                        answer = country 
+                        answer = current_country
                     elif 'state' in label:
                         answer = state
                     elif 'city' in label:
@@ -519,7 +527,8 @@ def answer_questions(modal: WebElement, questions_list: set, work_location: str,
                     if not foundOption:
                         #TODO: Use AI to answer the question need to be implemented logic to extract the options for the question
                         print_lg(f'Failed to find an option with text "{answer}" for question labelled "{label_org}", answering randomly!')
-                        select.select_by_index(randint(1, len(select.options)-1))
+                        rand_max = max(1, len(select.options) - 1)
+                        select.select_by_index(randint(1, rand_max) if rand_max > 1 else 0)
                         answer = select.first_selected_option.text
                         randomly_answered_questions.add((f'{label_org} [ {options} ]',"select"))
             questions_list.add((f'{label_org} [ {options} ]', answer, "select", prev_answer))
@@ -558,6 +567,10 @@ def answer_questions(modal: WebElement, questions_list: set, work_location: str,
                     actions.move_to_element(foundOption).click().perform()
                 else:    
                     possible_answer_phrases = ["Decline", "not wish", "don't wish", "Prefer not", "not want"] if answer == 'Decline' else [answer]
+                    if answer.lower() == 'yes':
+                        possible_answer_phrases += ["Sí", "Si", "Oui", "Ja", "Yes"]
+                    elif answer.lower() == 'no':
+                        possible_answer_phrases += ["No", "Non", "Nein"]
                     ele = options[0]
                     answer = options_labels[0]
                     for phrase in possible_answer_phrases:
@@ -583,7 +596,7 @@ def answer_questions(modal: WebElement, questions_list: set, work_location: str,
             continue
         
         # Check if it's a text question
-        text = try_xp(Question, ".//input[@type='text']", False)
+        text = try_xp(Question, ".//input[@type='text' or @type='number']", False)
         if text: 
             do_actions = False
             label = try_xp(Question, ".//label[@for]", False)
@@ -595,7 +608,8 @@ def answer_questions(modal: WebElement, questions_list: set, work_location: str,
 
             prev_answer = text.get_attribute("value")
             if not prev_answer or overwrite_previous_answers:
-                if 'experience' in label or 'years' in label: answer = years_of_experience
+                if 'birth' in label: answer = birth_year
+                elif 'experience' in label or 'years' in label: answer = years_of_experience
                 elif 'phone' in label or 'mobile' in label: answer = phone_number
                 elif 'street' in label: answer = street
                 elif 'city' in label or 'location' in label or 'address' in label:
@@ -634,10 +648,10 @@ def answer_questions(modal: WebElement, questions_list: set, work_location: str,
                 elif 'website' in label or 'blog' in label or 'portfolio' in label or 'link' in label: answer = website
                 elif 'scale of 1-10' in label: answer = confidence_level
                 elif 'headline' in label: answer = linkedin_headline
-                elif ('hear' in label or 'come across' in label) and 'this' in label and ('job' in label or 'position' in label): answer = "https://github.com/GodsScion/Auto_job_applier_linkedIn"
+                elif ('hear' in label or 'come across' in label) and 'this' in label and ('job' in label or 'position' in label): answer = "LinkedIn"
                 elif 'state' in label or 'province' in label: answer = state
                 elif 'zip' in label or 'postal' in label or 'code' in label: answer = zipcode
-                elif 'country' in label: answer = country
+                elif 'country' in label: answer = current_country
                 else: answer = answer_common_questions(label,answer)
                 ##> ------ Yang Li : MARKYangL - Feature ------
                 if answer == "":
@@ -666,6 +680,11 @@ def answer_questions(modal: WebElement, questions_list: set, work_location: str,
                         answer = years_of_experience
                 ##<
                 text.clear()
+                answer = str(answer)
+                # Respect the field's maxlength attribute to avoid validation errors
+                max_length = text.get_attribute("maxlength")
+                if max_length and max_length.isdigit():
+                    answer = answer[:int(max_length)]
                 text.send_keys(answer)
                 if do_actions:
                     sleep(2)
@@ -677,6 +696,7 @@ def answer_questions(modal: WebElement, questions_list: set, work_location: str,
         # Check if it's a textarea question
         text_area = try_xp(Question, ".//textarea", False)
         if text_area:
+            do_actions = False
             label = try_xp(Question, ".//label[@for]", False)
             label_org = label.text if label else "Unknown"
             label = label_org.lower()
@@ -709,8 +729,12 @@ def answer_questions(modal: WebElement, questions_list: set, work_location: str,
                             answer = ""
                     else:
                         randomly_answered_questions.add((label_org, "textarea"))
-            text_area.clear()
-            text_area.send_keys(answer)
+                text_area.clear()
+                answer = str(answer)
+                max_length = text_area.get_attribute("maxlength")
+                if max_length and max_length.isdigit():
+                    answer = answer[:int(max_length)]
+                text_area.send_keys(answer)
             if do_actions:
                     sleep(2)
                     actions.send_keys(Keys.ARROW_DOWN)
@@ -786,12 +810,26 @@ def external_apply(pagination_element: WebElement, job_id: str, job_link: str, r
 
 def follow_company(modal: WebDriver = driver) -> None:
     '''
-    Function to follow or un-follow easy applied companies based om `follow_companies`
+    Function to follow or un-follow easy applied companies based on `follow_companies`
     '''
     try:
+        follow_checkbox_input = None
+        checkbox_id = None
+        # Try known ID first
         follow_checkbox_input = try_xp(modal, ".//input[@id='follow-company-checkbox' and @type='checkbox']", False)
+        if follow_checkbox_input:
+            checkbox_id = 'follow-company-checkbox'
+        else:
+            # Fallback: find a label containing 'follow' and use its paired checkbox
+            follow_label = try_xp(modal, ".//label[contains(translate(., 'FOLLOW', 'follow'), 'follow')]", False)
+            if follow_label:
+                checkbox_id = follow_label.get_attribute("for")
+                if checkbox_id:
+                    follow_checkbox_input = try_xp(modal, f".//input[@id='{checkbox_id}' and @type='checkbox']", False)
         if follow_checkbox_input and follow_checkbox_input.is_selected() != follow_companies:
-            try_xp(modal, ".//label[@for='follow-company-checkbox']")
+            label = try_xp(modal, f".//label[@for='{checkbox_id}']", False)
+            if label: actions.move_to_element(label).click().perform()
+            print_lg(f'{"Followed" if follow_companies else "Unfollowed"} company.')
     except Exception as e:
         print_lg("Failed to update follow companies checkbox!", e)
     
