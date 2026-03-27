@@ -15,7 +15,7 @@ version:    26.01.20.5.08
 '''
 
 from modules.helpers import get_default_temp_profile, make_directories
-from config.settings import run_in_background, stealth_mode, disable_extensions, safe_mode, file_name, failed_file_name, logs_folder_path, generated_resume_path
+from config.settings import run_in_background, stealth_mode, disable_extensions, safe_mode, file_name, failed_file_name, logs_folder_path, generated_resume_path, chrome_profile_name, bot_profile_dir
 from config.questions import default_resume_path
 if stealth_mode:
     import undetected_chromedriver as uc
@@ -25,22 +25,47 @@ else:
     # from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.action_chains import ActionChains
 from selenium.webdriver.support.ui import WebDriverWait
-from modules.helpers import find_default_profile_directory, critical_error_log, print_lg
+from modules.helpers import find_default_profile_directory, critical_error_log, print_lg, find_profile_folder_by_name
 from selenium.common.exceptions import SessionNotCreatedException
 
 def createChromeSession(isRetry: bool = False):
     make_directories([file_name,failed_file_name,logs_folder_path+"/screenshots",default_resume_path,generated_resume_path+"/temp"])
     # Set up WebDriver with Chrome Profile
     options = uc.ChromeOptions() if stealth_mode else Options()
+    if not stealth_mode:
+        options.add_argument("--disable-blink-features=AutomationControlled")
+        options.add_argument("--no-first-run")
+        options.add_argument("--no-default-browser-check")
+        options.add_argument("--disable-features=ChromeWhatsNewUI")
+        options.add_experimental_option("excludeSwitches", ["enable-automation"])
+        options.add_experimental_option("useAutomationExtension", False)
     if run_in_background:   options.add_argument("--headless")
     if disable_extensions:  options.add_argument("--disable-extensions")
 
     print_lg("IF YOU HAVE MORE THAN 10 TABS OPENED, PLEASE CLOSE OR BOOKMARK THEM! Or it's highly likely that application will just open browser and not do anything!")
-    profile_dir = find_default_profile_directory()
     if isRetry:
         print_lg("Will login with a guest profile, browsing history will not be saved in the browser!")
-    elif profile_dir and not safe_mode:
-        options.add_argument(f"--user-data-dir={profile_dir}")
+        options.add_argument(f"--user-data-dir={get_default_temp_profile()}")
+    elif bot_profile_dir:
+        print_lg(f'Using dedicated bot profile directory: "{bot_profile_dir}"')
+        options.add_argument(f"--user-data-dir={bot_profile_dir}")
+    elif not safe_mode:
+        profile_dir = find_default_profile_directory()
+        if profile_dir:
+            if chrome_profile_name:
+                profile_folder = find_profile_folder_by_name(profile_dir, chrome_profile_name)
+                if profile_folder:
+                    print_lg(f'Using Chrome profile: "{chrome_profile_name}" ({profile_folder})')
+                    options.add_argument(f"--user-data-dir={profile_dir}")
+                    options.add_argument(f"--profile-directory={profile_folder}")
+                else:
+                    print_lg(f'Chrome profile "{chrome_profile_name}" not found, falling back to default profile.')
+                    options.add_argument(f"--user-data-dir={profile_dir}")
+            else:
+                options.add_argument(f"--user-data-dir={profile_dir}")
+        else:
+            print_lg("Logging in with a guest profile, Web history will not be saved!")
+            options.add_argument(f"--user-data-dir={get_default_temp_profile()}")
     else:
         print_lg("Logging in with a guest profile, Web history will not be saved!")
         options.add_argument(f"--user-data-dir={get_default_temp_profile()}")
