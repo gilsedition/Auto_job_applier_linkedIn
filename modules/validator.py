@@ -59,7 +59,7 @@ def validate_personals() -> None | ValueError | TypeError:
     check_string(middle_name, "middle_name")
     check_string(last_name, "last_name", min_length=1)
 
-    check_string(phone_number, "phone_number", min_length=10)
+    check_string(phone_number, "phone_number", min_length=9)
 
     check_string(current_city, "current_city")
     
