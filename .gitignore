@@ -10,7 +10,8 @@ old
 
 secrets.py
 config/personals.py
-config/
+config/**
+!config/search.py
 .venv
 apikeys.py
 bot_run_log.txt
