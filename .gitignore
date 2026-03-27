@@ -13,3 +13,4 @@ config/personals.py
 config/
 .venv
 apikeys.py
+bot_run_log.txt
