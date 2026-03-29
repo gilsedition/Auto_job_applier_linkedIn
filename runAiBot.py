@@ -108,16 +108,15 @@ def human_type(element: WebElement, text: str, min_delay: float = 0.03, max_dela
 
 
 def has_security_challenge() -> bool:
-    '''Detect common LinkedIn verification/challenge pages or captcha surfaces.'''
+    '''Detect LinkedIn verification/challenge pages or captcha surfaces.'''
     try:
         cur_url = driver.current_url.lower()
-        if any(key in cur_url for key in ["checkpoint", "challenge", "captcha", "verify"]):
+        # Match only LinkedIn's specific challenge/checkpoint URL paths
+        if any(key in cur_url for key in ["linkedin.com/checkpoint/challenge", "linkedin.com/checkpoint/lg", "linkedin.com/uas/challenge", "/captcha/"]):
             return True
-
+        # Check for a visible security verification heading (not invisible reCAPTCHA scripts)
         challenge_banner = try_xp(driver, "//h1[contains(translate(., 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'security verification')]", False)
-        captcha_frame = try_xp(driver, "//iframe[contains(translate(@src, 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'captcha')]", False)
-        recaptcha = try_xp(driver, "//*[contains(@class, 'g-recaptcha') or contains(@id, 'recaptcha')]", False)
-        return bool(challenge_banner or captcha_frame or recaptcha)
+        return bool(challenge_banner)
     except Exception:
         return False
 
@@ -468,9 +467,14 @@ def get_resume_for_term(search_term: str) -> str:
 def answer_common_questions(label: str, answer: str) -> str:
     if 'sponsorship' in label or 'visa' in label: answer = require_visa
     elif any(phrase in label for phrase in ['living in', 'based in', 'reside in', 'residing in', 'located in', 'authorized to work in', 'allowed to work in', 'right to work in', 'permission to work in', 'eligible to work in', 'currently in', 'live in']):
-        # Also answer Yes for EU/EEA/Schengen/Europe questions (Sharon is in France = EU member)
-        eu_match = any(term in label for term in ['european union', 'europe', 'schengen', 'eea', ' eu ', ' eu?', ' eu.', 'eu/'])
-        answer = 'Yes' if current_country.lower() in label or eu_match else 'No'
+        # Return No only when label explicitly names a non-EU jurisdiction.
+        # Generic labels like "job's location" default to Yes — Sharon applies to EU roles only.
+        non_eu = any(c in label for c in ['united states', ' usa', ' us ', 'canada', 'australia', 'india', 'china', 'brazil', 'japan', 'south korea', 'singapore', 'new zealand', 'united kingdom', ' uk '])
+        eu_match = any(term in label for term in [current_country.lower(), 'european union', 'europe', 'schengen', 'eea', ' eu ', ' eu?', ' eu.', 'eu/'])
+        answer = 'No' if non_eu and not eu_match else 'Yes'
+    elif any(phrase in label for phrase in ['prevent you from working', 'conditions or agreements prevent', 'conditions prevent you', 'agreement prevent']):
+        # "Would any employment conditions/agreements prevent you from working here?" → No
+        answer = 'No'
     elif 'english' in label and any(w in label for w in ['level', 'proficiency', 'fluent', 'speak', 'advanced', 'inglés', 'ingles']):
         answer = 'Yes'
     return answer
@@ -739,6 +743,12 @@ def answer_questions(modal: WebElement, questions_list: set, work_location: str,
             if not prev_answer or overwrite_previous_answers:
                 if 'summary' in label: answer = linkedin_summary
                 elif 'cover' in label: answer = cover_letter
+                elif any(phrase in label for phrase in [
+                    'why are you considering', 'why do you want to work', 'why do you want to join',
+                    'why are you interested', 'why do you see yourself', 'what draws you to',
+                    'employer of choice', 'why this company', 'why apply', 'why do you wish',
+                    'why would you like to', 'why are you applying',
+                ]): answer = motivation_answer
                 if answer == "":
                 ##> ------ Yang Li : MARKYangL - Feature ------
                     if use_AI and aiClient:

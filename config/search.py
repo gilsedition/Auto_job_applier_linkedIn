@@ -19,7 +19,7 @@ version:    26.01.20.5.08
 
 # These Sentences are Searched in LinkedIn
 # Enter your search terms inside '[ ]' with quotes ' "searching title" ' for each search followed by comma ', ' Eg: ["Software Engineer", "Software Developer", "Selenium Developer"]
-search_terms = ["Billing Analyst", "Accounts Payable Analyst", "Finance Operations Analyst", "Billing Operations Specialist", "AP Specialist", "Invoice Analyst", "Finance Analyst", "Revenue Operations Analyst", "AR AP Analyst", "Financial Operations Specialist"]
+search_terms = ["Billing Analyst", "Accounts Payable Analyst", "Finance Operations Analyst", "Billing Operations Specialist", "AP Specialist", "Invoice Analyst", "Finance Analyst", "Revenue Operations Analyst", "Accounts Receivable Analyst", "Financial Operations Specialist"]
 
 # Search location, this will be filled in "City, state, or zip code" search box. If left empty as "", tool will not fill it.
 search_location = "Europe"               # Some valid examples: "", "United States", "India", "Chicago, Illinois, United States", "90001, Los Angeles, California, United States", "Bengaluru, Karnataka, India", etc.
