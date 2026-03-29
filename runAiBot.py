@@ -279,7 +279,7 @@ def apply_filters() -> None:
 
     except Exception as e:
         print_lg("Setting the preferences failed!")
-        pyautogui.confirm(f"Faced error while applying filters. Please make sure correct filters are selected, click on show results and click on any button of this dialog, I know it sucks. Can't turn off Pause after search when error occurs! ERROR: {e}", ["Doesn't look good, but Continue XD", "Look's good, Continue"])
+        pyautogui.confirm(f"Faced error while applying filters. Please make sure correct filters are selected, click on show results and click on any button of this dialog. ERROR: {e}", "Filter Error", ["Doesn't look good, but Continue", "Look's good, Continue"])
         # print_lg(e)
 
 
@@ -1240,7 +1240,6 @@ chatGPT_tab = False
 linkedIn_tab = False
 
 def main() -> None:
-    pyautogui.alert("Please consider sponsoring this project at:\n\nhttps://github.com/sponsors/GodsScion\n\n", "Support the project", "Okay")
     total_runs = 1
     try:
         global linkedIn_tab, tabs_count, useNewResume, aiClient
@@ -1320,33 +1319,8 @@ def main() -> None:
         print_lg("\nFailed jobs:                    {}".format(failed_count))
         print_lg("Irrelevant jobs skipped:        {}\n".format(skip_count))
         if randomly_answered_questions: print_lg("\n\nQuestions randomly answered:\n  {}  \n\n".format(";\n".join(str(question) for question in randomly_answered_questions)))
-        quotes = choice([
-            "Never quit. You're one step closer than before. - Sai Vignesh Golla", 
-            "All the best with your future interviews, you've got this. - Sai Vignesh Golla", 
-            "Keep up with the progress. You got this. - Sai Vignesh Golla", 
-            "If you're tired, learn to take rest but never give up. - Sai Vignesh Golla",
-            "Success is not final, failure is not fatal, It is the courage to continue that counts. - Winston Churchill (Not a sponsor)",
-            "Believe in yourself and all that you are. Know that there is something inside you that is greater than any obstacle. - Christian D. Larson (Not a sponsor)",
-            "Every job is a self-portrait of the person who does it. Autograph your work with excellence. - Jessica Guidobono (Not a sponsor)",
-            "The only way to do great work is to love what you do. If you haven't found it yet, keep looking. Don't settle. - Steve Jobs (Not a sponsor)",
-            "Opportunities don't happen, you create them. - Chris Grosser (Not a sponsor)",
-            "The road to success and the road to failure are almost exactly the same. The difference is perseverance. - Colin R. Davis (Not a sponsor)",
-            "Obstacles are those frightful things you see when you take your eyes off your goal. - Henry Ford (Not a sponsor)",
-            "The only limit to our realization of tomorrow will be our doubts of today. - Franklin D. Roosevelt (Not a sponsor)",
-            ])
-        sponsors = "Be the first to have your name here!"
-        timeSaved = (easy_applied_count * 80) + (external_jobs_count * 20) + (skip_count * 10)
-        timeSavedMsg = ""
-        if timeSaved > 0:
-            timeSaved += 60
-            timeSavedMsg = f"In this run, you saved approx {round(timeSaved/60)} mins ({timeSaved} secs), please consider supporting the project."
-        msg = f"{quotes}\n\n\n{timeSavedMsg}\nYou can also get your quote and name shown here, or prioritize your bug reports by supporting the project at:\n\nhttps://github.com/sponsors/GodsScion\n\n\nSummary:\n{summary}\n\n\nBest regards,\nSai Vignesh Golla\nhttps://www.linkedin.com/in/saivigneshgolla/\n\nTop Sponsors:\n{sponsors}"
-        pyautogui.alert(msg, "Exiting..")
-        print_lg(msg,"Closing the browser...")
         if tabs_count >= 10:
-            msg = "NOTE: IF YOU HAVE MORE THAN 10 TABS OPENED, PLEASE CLOSE OR BOOKMARK THEM!\n\nOr it's highly likely that application will just open browser and not do anything next time!" 
-            pyautogui.alert(msg,"Info")
-            print_lg("\n"+msg)
+            print_lg("\nNOTE: YOU HAVE 10+ TABS OPEN. Close or bookmark them before next run or the bot may not work correctly.")
         ##> ------ Yang Li : MARKYangL - Feature ------
         if use_AI and aiClient:
             try:
