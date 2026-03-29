@@ -113,19 +113,23 @@ Response schema for `extract_skills` function
 # Structure of messages = `[{"role": "user", "content": answer_questions_prompt}]`
 
 ai_answer_prompt = """
-You are an intelligent AI assistant filling out a form and answer like human,. 
-Respond concisely based on the type of question:
+You are an intelligent AI assistant filling out a job application form on behalf of a candidate. Answer in first person as if you are the candidate.
 
-1. If the question asks for **years of experience, duration, or numeric value**, return **only a number** (e.g., "2", "5", "10").
-2. If the question is **a Yes/No question**, return **only "Yes" or "No"**.
-3. If the question requires a **short description**, give a **single-sentence response**.
-4. If the question requires a **detailed response**, provide a **well-structured and human-like answer and keep no of character <350 for answering**.
-5. Do **not** repeat the question in your answer.
-6. here is user information to answer the questions if needed:
-**User Information:** 
-{}
+Question type: {2}
 
-**QUESTION Strat from here:**  
-{}
+Rules:
+1. **number** — return ONLY a number (e.g., "4"). Use for years of experience, durations, numeric fields.
+2. **yes_no** — return ONLY "Yes" or "No".
+3. **text** (single-line) — one concise sentence, max 120 characters.
+4. **textarea** (multi-line, general) — well-structured, human and professional tone, max 600 characters. Do not repeat the question.
+5. **cover_letter** — write a tailored, professional cover letter of 3–4 short paragraphs. Mention the specific COMPANY NAME and ROLE from the job description. Highlight relevant experience and metrics. End with a warm closing. Max 1800 characters.
+6. **motivation** — write a compelling 2–3 paragraph answer explaining why you want THIS specific company and role. Reference the company name and something specific from the job description. Be genuine and specific. Max 800 characters.
+7. Never repeat the question in your answer.
+
+**Candidate Information:**
+{0}
+
+**Question:**
+{1}
 """
 #<

@@ -742,23 +742,28 @@ def answer_questions(modal: WebElement, questions_list: set, work_location: str,
             prev_answer = text_area.get_attribute("value")
             if not prev_answer or overwrite_previous_answers:
                 if 'summary' in label: answer = linkedin_summary
-                elif 'cover' in label: answer = cover_letter
-                elif any(phrase in label for phrase in [
-                    'why are you considering', 'why do you want to work', 'why do you want to join',
-                    'why are you interested', 'why do you see yourself', 'what draws you to',
-                    'employer of choice', 'why this company', 'why apply', 'why do you wish',
-                    'why would you like to', 'why are you applying',
-                ]): answer = motivation_answer
                 if answer == "":
                 ##> ------ Yang Li : MARKYangL - Feature ------
+                    # Determine AI question_type hint for cover/motivation so the prompt gives the right length/style
+                    if 'cover' in label:
+                        ai_qtype = "cover_letter"
+                    elif any(phrase in label for phrase in [
+                        'why are you considering', 'why do you want to work', 'why do you want to join',
+                        'why are you interested', 'why do you see yourself', 'what draws you to',
+                        'employer of choice', 'why this company', 'why apply', 'why do you wish',
+                        'why would you like to', 'why are you applying',
+                    ]):
+                        ai_qtype = "motivation"
+                    else:
+                        ai_qtype = "textarea"
                     if use_AI and aiClient:
                         try:
                             if ai_provider.lower() == "openai":
-                                answer = ai_answer_question(aiClient, label_org, question_type="textarea", job_description=job_description, user_information_all=user_information_all)
+                                answer = ai_answer_question(aiClient, label_org, question_type=ai_qtype, job_description=job_description, user_information_all=user_information_all)
                             elif ai_provider.lower() == "deepseek":
-                                answer = deepseek_answer_question(aiClient, label_org, options=None, question_type="textarea", job_description=job_description, about_company=None, user_information_all=user_information_all)
+                                answer = deepseek_answer_question(aiClient, label_org, options=None, question_type=ai_qtype, job_description=job_description, about_company=None, user_information_all=user_information_all)
                             elif ai_provider.lower() == "gemini":
-                                answer = gemini_answer_question(aiClient, label_org, options=None, question_type="textarea", job_description=job_description, about_company=None, user_information_all=user_information_all)
+                                answer = gemini_answer_question(aiClient, label_org, options=None, question_type=ai_qtype, job_description=job_description, about_company=None, user_information_all=user_information_all)
                             else:
                                 randomly_answered_questions.add((label_org, "textarea"))
                                 answer = ""
@@ -773,6 +778,14 @@ def answer_questions(modal: WebElement, questions_list: set, work_location: str,
                             answer = ""
                     else:
                         randomly_answered_questions.add((label_org, "textarea"))
+                    # Hardcoded fallbacks when AI is off or returned empty
+                    if not answer:
+                        if 'cover' in label:
+                            answer = cover_letter
+                            randomly_answered_questions.discard((label_org, "textarea"))
+                        elif ai_qtype == "motivation":
+                            answer = motivation_answer
+                            randomly_answered_questions.discard((label_org, "textarea"))
                 text_area.clear()
                 answer = str(answer)
                 max_length = text_area.get_attribute("maxlength")
