@@ -79,7 +79,14 @@ def ai_create_openai_client() -> OpenAI:
         if not use_AI:
             raise ValueError("AI is not enabled! Please enable it by setting `use_AI = True` in `secrets.py` in `config` folder.")
         
-        client = OpenAI(base_url=llm_api_url, api_key=llm_api_key)
+        client = OpenAI(
+            base_url=llm_api_url,
+            api_key=llm_api_key,
+            default_headers={
+                "HTTP-Referer": "https://sharondmello.framer.website/",
+                "X-Title": "Sharon-Job-Bot",
+            }
+        )
 
         models = ai_get_models_list(client)
         if "error" in models:
@@ -87,7 +94,7 @@ def ai_create_openai_client() -> OpenAI:
         if len(models) == 0:
             raise ValueError("No models are available!")
         if llm_model not in [model.id for model in models]:
-            raise ValueError(f"Model `{llm_model}` is not found!")
+            print_lg(f"WARNING: Model `{llm_model}` not in models list — proceeding anyway (OpenRouter may paginate results).")
         
         print_lg("---- SUCCESSFULLY CREATED OPENAI CLIENT! ----")
         print_lg(f"Using API URL: {llm_api_url}")
@@ -166,6 +173,10 @@ def ai_completion(client: OpenAI, messages: list[dict], response_format: dict = 
         params["temperature"] = temperature
     if response_format and llm_spec in ["openai", "openai-like"]:
         params["response_format"] = response_format
+    # Reasoning models (e.g. stepfun/step-3.5-flash:free) need reasoning enabled and enough
+    # tokens to finish thinking before producing content — otherwise content returns None.
+    params["max_tokens"] = 4096
+    params["extra_body"] = {"reasoning": {"enabled": True}}
 
     completion = client.chat.completions.create(**params)
 
@@ -183,7 +194,7 @@ def ai_completion(client: OpenAI, messages: list[dict], response_format: dict = 
         print_lg("\n--STREAMING COMPLETE")
     else:
         ai_check_error(completion)
-        result = completion.choices[0].message.content
+        result = completion.choices[0].message.content or ""
     
     if response_format:
         result = convert_to_json(result)
