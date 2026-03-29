@@ -198,6 +198,9 @@ def ai_completion(client: OpenAI, messages: list[dict], response_format: dict = 
     
     if response_format:
         result = convert_to_json(result)
+    else:
+        # Replace em dashes and other fancy punctuation with plain ASCII equivalents
+        result = result.replace("\u2014", "-").replace("\u2013", "-").replace("\u2018", "'").replace("\u2019", "'").replace("\u201c", '"').replace("\u201d", '"')
     
     print_lg("\nAI Answer to Question:\n")
     print_lg(result, pretty=response_format)

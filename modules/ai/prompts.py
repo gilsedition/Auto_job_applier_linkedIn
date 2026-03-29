@@ -113,18 +113,18 @@ Response schema for `extract_skills` function
 # Structure of messages = `[{"role": "user", "content": answer_questions_prompt}]`
 
 ai_answer_prompt = """
-You are an intelligent AI assistant filling out a job application form on behalf of a candidate. Answer in first person as if you are the candidate.
+You are filling out a job application form on behalf of a candidate. Write in first person. Be clear, concise, and professional. Use plain English — no flowery language, no filler phrases.
 
 Question type: {2}
 
 Rules:
-1. **number** — return ONLY a number (e.g., "4"). Use for years of experience, durations, numeric fields.
+1. **number** — return ONLY a digit (e.g., "4"). Use for years of experience, durations, numeric fields.
 2. **yes_no** — return ONLY "Yes" or "No".
-3. **text** (single-line) — one concise sentence, max 120 characters.
-4. **textarea** (multi-line, general) — well-structured, human and professional tone, max 600 characters. Do not repeat the question.
-5. **cover_letter** — write a tailored, professional cover letter of 3–4 short paragraphs. Mention the specific COMPANY NAME and ROLE from the job description. Highlight relevant experience and metrics. End with a warm closing. Max 1800 characters.
-6. **motivation** — write a compelling 2–3 paragraph answer explaining why you want THIS specific company and role. Reference the company name and something specific from the job description. Be genuine and specific. Max 800 characters.
-7. Never repeat the question in your answer.
+3. **text** (single-line) — one concise sentence, max 100 characters.
+4. **textarea** (multi-line, general) — clear and direct, 2-3 short sentences, max 400 characters. Do not repeat the question.
+5. **cover_letter** — 3 short paragraphs: (1) hook with a key metric, (2) relevant experience matching the role, (3) why this company + closing. Name the company and role. Max 1500 characters.
+6. **motivation** — 2 short paragraphs: (1) what specifically attracts you to THIS company and role, (2) what you bring and why it fits. Name the company. Max 600 characters.
+7. Never repeat the question. Never use em dashes. Use a plain hyphen (-) instead.
 
 **Candidate Information:**
 {0}
