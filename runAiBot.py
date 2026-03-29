@@ -449,8 +449,20 @@ def get_job_description(
 def upload_resume(modal: WebElement, resume: str) -> tuple[bool, str]:
     try:
         modal.find_element(By.NAME, "file").send_keys(os.path.abspath(resume))
-        return True, os.path.basename(default_resume_path)
+        return True, os.path.basename(resume)  # return actual filename, not hardcoded default
     except: return False, "Previous resume"
+
+
+def get_resume_for_term(search_term: str) -> str:
+    '''Return the tailored resume path for this search term, falling back to default_resume_path.'''
+    for keyword, path in resume_map.items():
+        if keyword.lower() in search_term.lower():
+            if os.path.exists(path):
+                print_lg(f'[Resume] Using tailored resume for "{search_term}": {path}')
+                return path
+            else:
+                print_lg(f'[Resume] Tailored resume not found at "{path}", falling back to default.')
+    return default_resume_path
 
 # Function to answer common questions for Easy Apply
 def answer_common_questions(label: str, answer: str) -> str:
@@ -939,7 +951,13 @@ def apply_to_jobs(search_terms: list[str]) -> None:
     print_lg(f"Session pacing: click_gap={session_click_gap}s, max applies/search={session_switch_cap}")
 
     if randomize_search_order:  shuffle(search_terms)
+    last_uploaded_resume = None  # track which resume was last uploaded to trigger re-upload on term switch
     for searchTerm in search_terms:
+        # Select tailored resume for this search term; trigger re-upload if it differs from last.
+        active_resume = get_resume_for_term(searchTerm)
+        if active_resume != last_uploaded_resume:
+            useNewResume = True
+
         driver.get(f"https://www.linkedin.com/jobs/search/?keywords={searchTerm}")
         print_lg("\n________________________________________________________________________________________________________________________\n")
         print_lg(f'\n>>>> Now searching for "{searchTerm}" <<<<\n\n')
@@ -1110,7 +1128,7 @@ def apply_to_jobs(search_terms: list[str]) -> None:
                                         errored = "stuck"
                                         raise Exception("Seems like stuck in a continuous loop of next, probably because of new questions.")
                                     questions_list = answer_questions(modal, questions_list, work_location, job_description=description)
-                                    if useNewResume and not uploaded: uploaded, resume = upload_resume(modal, default_resume_path)
+                                    if useNewResume and not uploaded: uploaded, resume = upload_resume(modal, active_resume)
                                     try: next_button = modal.find_element(By.XPATH, './/span[normalize-space(.)="Review"]') 
                                     except NoSuchElementException:  next_button = modal.find_element(By.XPATH, './/button[contains(span, "Next")]')
                                     try: next_button.click()
@@ -1163,7 +1181,9 @@ def apply_to_jobs(search_terms: list[str]) -> None:
                         if skip: continue
 
                     submitted_jobs(job_id, title, company, work_location, work_style, description, experience_required, skills, hr_name, hr_link, resume, reposted, date_listed, date_applied, job_link, application_link, questions_list, connect_request)
-                    if uploaded:   useNewResume = False
+                    if uploaded:
+                        useNewResume = False
+                        last_uploaded_resume = active_resume  # remember what was uploaded for this term
 
                     print_lg(f'Successfully saved "{title} | {company}" job. Job ID: {job_id} info')
                     current_count += 1
