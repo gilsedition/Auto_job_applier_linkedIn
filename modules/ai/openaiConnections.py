@@ -29,6 +29,7 @@ from openai import OpenAI
 from openai.types.model import Model
 from openai.types.chat import ChatCompletion, ChatCompletionChunk
 from typing import Iterator, Literal
+import time
 
 
 apiCheckInstructions = """
@@ -41,6 +42,24 @@ Open `secret.py` in `/config` folder to configure your AI API connections.
 
 ERROR:
 """
+
+
+def empty_skills_response() -> dict[str, list[str]]:
+    return {
+        "tech_stack": [],
+        "technical_skills": [],
+        "other_skills": [],
+        "required_skills": [],
+        "nice_to_have": [],
+    }
+
+
+def is_valid_skills_response(data: dict | None) -> bool:
+    if not isinstance(data, dict) or data.get("error"):
+        return False
+
+    required_keys = ["tech_stack", "technical_skills", "other_skills", "required_skills", "nice_to_have"]
+    return all(isinstance(data.get(key), list) for key in required_keys)
 
 # Function to show an AI error alert
 def ai_error_alert(message: str, stackTrace: str, title: str = "AI Connection Error") -> None:
@@ -96,11 +115,7 @@ def ai_create_openai_client() -> OpenAI:
         if llm_model not in [model.id for model in models]:
             print_lg(f"WARNING: Model `{llm_model}` not in models list — proceeding anyway (OpenRouter may paginate results).")
         
-        print_lg("---- SUCCESSFULLY CREATED OPENAI CLIENT! ----")
-        print_lg(f"Using API URL: {llm_api_url}")
         print_lg(f"Using Model: {llm_model}")
-        print_lg("Check './config/secrets.py' for more details.\n")
-        print_lg("---------------------------------------------")
 
         return client
     except Exception as e:
@@ -131,12 +146,9 @@ def ai_get_models_list(client: OpenAI) -> list[ Model | str]:
     * Returns a `list` object
     """
     try:
-        print_lg("Getting AI models list...")
         if not client: raise ValueError("Client is not available!")
         models = client.models.list()
         ai_check_error(models)
-        print_lg("Available models:")
-        print_lg(models.data, pretty=True)
         return models.data
     except Exception as e:
         critical_error_log("Error occurred while getting models list!", e)
@@ -154,8 +166,18 @@ def model_supports_temperature(model_name: str) -> bool:
     """
     return model_name in ["gpt-3.5-turbo", "gpt-4", "gpt-4-turbo", "gpt-4o", "gpt-4o-mini"]
 
+
+def model_is_reasoning_model(model_name: str) -> bool:
+    """
+    Returns True if the model uses OpenRouter's reasoning extra_body parameter.
+    These models run reasoning steps by default unless explicitly disabled, which
+    can exhaust free-tier token budgets before producing any visible content.
+    """
+    reasoning_prefixes = ("stepfun/", "deepseek/deepseek-r1", "deepseek-r1", "nvidia/nemotron-3-super")
+    return any(model_name.lower().startswith(p) for p in reasoning_prefixes)
+
 # Function to get chat completion from OpenAI API
-def ai_completion(client: OpenAI, messages: list[dict], response_format: dict = None, temperature: float = 0, stream: bool = stream_output) -> dict | ValueError:
+def ai_completion(client: OpenAI, messages: list[dict], response_format: dict = None, temperature: float = 0, stream: bool = stream_output, use_reasoning: bool = True) -> dict | ValueError:
     """
     Function that completes a chat and prints and formats the results of the OpenAI API calls.
     * Takes in `client` of type `OpenAI`
@@ -171,17 +193,13 @@ def ai_completion(client: OpenAI, messages: list[dict], response_format: dict = 
 
     if model_supports_temperature(llm_model):
         params["temperature"] = temperature
-    if response_format and llm_spec in ["openai", "openai-like"]:
-        # StepFun (and many OpenRouter providers) only support "text" or "json_object" —
-        # downgrade json_schema to json_object for non-native OpenAI endpoints.
-        if response_format.get("type") == "json_schema" and llm_spec == "openai-like":
-            params["response_format"] = {"type": "json_object"}
-        else:
-            params["response_format"] = response_format
-    # Reasoning models (e.g. stepfun/step-3.5-flash:free) need reasoning enabled and enough
-    # tokens to finish thinking before producing content — otherwise content returns None.
+    if response_format and llm_spec == "openai":
+        params["response_format"] = response_format
     params["max_tokens"] = 4096
-    params["extra_body"] = {"reasoning": {"enabled": True}}
+    if llm_spec == "openai-like" and model_is_reasoning_model(llm_model):
+        # Only send the reasoning toggle for models that support OpenRouter's reasoning parameter.
+        # Non-reasoning models (Nemotron, Llama, Mistral, etc.) will error if this is sent.
+        params["extra_body"] = {"reasoning": {"enabled": use_reasoning}}
 
     completion = client.chat.completions.create(**params)
 
@@ -195,20 +213,37 @@ def ai_completion(client: OpenAI, messages: list[dict], response_format: dict = 
             chunkMessage = chunk.choices[0].delta.content
             if chunkMessage != None:
                 result += chunkMessage
-            print_lg(chunkMessage, end="", flush=True)
+            # Avoid writing token-by-token streaming output to log.txt
+            print(chunkMessage, end="", flush=True)
         print_lg("\n--STREAMING COMPLETE")
     else:
         ai_check_error(completion)
         result = completion.choices[0].message.content or ""
+        # If model returned empty content (common on free tiers under load), retry once
+        if not result:
+            print_lg("WARNING: AI returned empty content, retrying after 5s...")
+            time.sleep(5)
+            completion = client.chat.completions.create(**params)
+            ai_check_error(completion)
+            result = completion.choices[0].message.content or ""
     
     if response_format:
-        result = convert_to_json(result)
+        if not result:
+            result = {"error": "Empty AI response", "data": ""}
+        else:
+            result = convert_to_json(result)
     else:
         # Replace em dashes and other fancy punctuation with plain ASCII equivalents
         result = result.replace("\u2014", "-").replace("\u2013", "-").replace("\u2018", "'").replace("\u2019", "'").replace("\u201c", '"').replace("\u201d", '"')
     
-    print_lg("\nAI Answer to Question:\n")
-    print_lg(result, pretty=response_format)
+    if response_format:
+        if isinstance(result, dict) and result.get("error"):
+            print_lg(f"AI structured response failed: {result.get('error')}")
+        elif isinstance(result, dict):
+            keys = [k for k in result.keys()]
+            print_lg(f"AI structured response received with keys: {keys}")
+    else:
+        print_lg(f"AI text response received ({len(result)} chars)")
     return result
 
 
@@ -221,15 +256,31 @@ def ai_extract_skills(client: OpenAI, job_description: str, stream: bool = strea
     * Returns a `dict` object representing JSON response
     """
     print_lg("-- EXTRACTING SKILLS FROM JOB DESCRIPTION")
-    try:        
-        prompt = extract_skills_prompt.format(job_description)
+    try:
+        # Truncate to avoid overwhelming free-tier models with context/token limits
+        max_desc_chars = 3000
+        if len(job_description) > max_desc_chars:
+            print_lg(f"Job description truncated from {len(job_description)} to {max_desc_chars} chars for skills extraction")
+            job_description = job_description[:max_desc_chars]
+        prompts = [
+            extract_skills_prompt.format(job_description),
+            deepseek_extract_skills_prompt.format(job_description),
+        ]
 
-        messages = [{"role": "user", "content": prompt}]
-        ##> ------ Dheeraj Deshwal : dheeraj20194@iiitd.ac.in/dheerajdeshwal9811@gmail.com - Bug fix ------
-        return ai_completion(client, messages, response_format=extract_skills_response_format, stream=stream)
-    ##<
+        for attempt, prompt in enumerate(prompts, start=1):
+            if attempt > 1:
+                print_lg("WARNING: Skills extraction returned invalid JSON, retrying with stricter JSON-only prompt...")
+
+            messages = [{"role": "user", "content": prompt}]
+            result = ai_completion(client, messages, response_format=extract_skills_response_format, stream=stream, use_reasoning=False)
+            if is_valid_skills_response(result):
+                return result
+
+        print_lg("WARNING: Skills extraction failed after retries, using empty skills schema")
+        return empty_skills_response()
     except Exception as e:
         ai_error_alert(f"Error occurred while extracting skills from job description. {apiCheckInstructions}", e)
+        return empty_skills_response()
 
 
 ##> ------ Dheeraj Deshwal : dheeraj9811 Email:dheeraj20194@iiitd.ac.in/dheerajdeshwal9811@gmail.com - Feature ------
@@ -266,7 +317,6 @@ def ai_answer_question(
             prompt += f"\nAbout the Company:\n{about_company}"
 
         messages = [{"role": "user", "content": prompt}]
-        print_lg("Prompt we are passing to AI: ", prompt)
         response =  ai_completion(client, messages, stream=stream)
         # print_lg("Response from AI: ", response)
         return response

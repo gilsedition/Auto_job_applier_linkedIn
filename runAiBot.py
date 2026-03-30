@@ -49,7 +49,8 @@ from modules.validator import validate_config
 if use_AI:
     from modules.ai.openaiConnections import ai_create_openai_client, ai_extract_skills, ai_answer_question, ai_close_openai_client
     from modules.ai.deepseekConnections import deepseek_create_client, deepseek_extract_skills, deepseek_answer_question
-    from modules.ai.geminiConnections import gemini_create_client, gemini_extract_skills, gemini_answer_question
+    if ai_provider == "gemini":
+        from modules.ai.geminiConnections import gemini_create_client, gemini_extract_skills, gemini_answer_question
 
 from typing import Literal
 
@@ -380,7 +381,7 @@ def extract_years_of_experience(text: str) -> int:
     # Extract all patterns like '10+ years', '5 years', '3-5 years', etc.
     matches = re.findall(re_experience, text)
     if len(matches) == 0: 
-        print_lg(f'\n{text}\n\nCouldn\'t find experience requirement in About the Job!')
+        print_lg("Couldn't find experience requirement in About the Job!")
         return 0
     return max([int(match) for match in matches if int(match) <= 12])
 
@@ -510,16 +511,29 @@ def answer_questions(modal: WebElement, questions_list: set, work_location: str,
                 optionsText = [option.text for option in select.options]
                 options = "".join([f' "{option}",' for option in optionsText])
             prev_answer = selected_option
-            if overwrite_previous_answers or selected_option == "Select an option":
+            if overwrite_previous_answers or selected_option == "Select an option" or label == "phone country code" or 'email' in label or ('english' in label and 'level' in label):
+                if label == "phone country code" and not optionsText:
+                    optionsText = [option.text for option in select.options]  # needed for fallback fuzzy match
+                if 'email' in label and not optionsText:
+                    optionsText = [option.text for option in select.options]  # needed for fallback fuzzy match
                 ##> ------ WINDY_WINDWARD Email:karthik.sarode23@gmail.com - Added fuzzy logic to answer location based questions ------
-                if 'email' in label or 'phone' in label: 
+                if 'email' in label:
+                    answer = email
+                elif label == 'phone country code':
+                    answer = phone_country_code
+                elif 'phone' in label:
                     answer = prev_answer
                 elif 'gender' in label or 'sex' in label: 
                     answer = gender
                 elif 'disability' in label: 
                     answer = disability_status
-                elif 'proficiency' in label or 'proficiência' in label or 'nivel' in label or 'nível' in label: 
-                    answer = 'Native or Bilingual'
+                elif 'proficiency' in label or 'proficiência' in label or 'nivel' in label or 'nível' in label or ('english' in label and 'level' in label):
+                    if 'english' in label:
+                        answer = 'Native or Bilingual'
+                    elif 'french' in label or 'français' in label or 'francais' in label:
+                        answer = 'Professional'
+                    else:
+                        answer = 'None'
                 elif 'category' in label or 'function' in label or 'department' in label:
                     answer = job_category
                 # Add location handling
@@ -595,7 +609,8 @@ def answer_questions(modal: WebElement, questions_list: set, work_location: str,
                 if option.is_selected(): prev_answer = options_labels[-1]
                 label_org += f' {options_labels[-1]},'
 
-            if overwrite_previous_answers or prev_answer is None:
+            is_work_auth = any(phrase in label for phrase in ['authorized to work', 'allowed to work', 'right to work', 'permission to work', 'eligible to work', 'legally authorized', 'legally entitled', 'living in', 'based in', 'reside in', 'residing in'])
+            if overwrite_previous_answers or prev_answer is None or is_work_auth:
                 if 'citizenship' in label or 'employment eligibility' in label: answer = us_citizenship
                 elif 'veteran' in label or 'protected' in label: answer = veteran_status
                 elif 'disability' in label or 'handicapped' in label: 
@@ -646,10 +661,11 @@ def answer_questions(modal: WebElement, questions_list: set, work_location: str,
             label = label_org.lower()
 
             prev_answer = text.get_attribute("value")
-            if not prev_answer or overwrite_previous_answers:
+            if not prev_answer or overwrite_previous_answers or 'phone' in label or 'mobile' in label or 'email' in label or 'experience' in label or 'years' in label:
                 if 'birth' in label: answer = birth_year
                 elif 'experience' in label or 'years' in label: answer = years_of_experience
                 elif 'phone' in label or 'mobile' in label: answer = phone_number
+                elif 'email' in label: answer = email
                 elif 'street' in label: answer = street
                 elif 'city' in label or 'location' in label or 'address' in label:
                     answer = current_city if current_city else work_location
@@ -719,6 +735,8 @@ def answer_questions(modal: WebElement, questions_list: set, work_location: str,
                         answer = years_of_experience
                 ##<
                 text.clear()
+                text.send_keys(Keys.CONTROL + 'a')
+                text.send_keys(Keys.DELETE)
                 answer = str(answer)
                 # Respect the field's maxlength attribute to avoid validation errors
                 max_length = text.get_attribute("maxlength")
@@ -1050,7 +1068,7 @@ def apply_to_jobs(search_terms: list[str], per_term_cap: int = None, force_under
                     hr_name = "Unknown"
                     connect_request = "In Development" # Still in development
                     date_listed = "Unknown"
-                    skills = "Needs an AI" # Still in development
+                    skills = "N/A"
                     resume = "Pending"
                     reposted = False
                     questions_list = None
@@ -1118,23 +1136,6 @@ def apply_to_jobs(search_terms: list[str], per_term_cap: int = None, force_under
                         continue
 
                     
-                    if use_AI and description != "Unknown":
-                        ##> ------ Yang Li : MARKYangL - Feature ------
-                        try:
-                            if ai_provider.lower() == "openai":
-                                skills = ai_extract_skills(aiClient, description)
-                            elif ai_provider.lower() == "deepseek":
-                                skills = deepseek_extract_skills(aiClient, description)
-                            elif ai_provider.lower() == "gemini":
-                                skills = gemini_extract_skills(aiClient, description)
-                            else:
-                                skills = "In Development"
-                            print_lg(f"Extracted skills using {ai_provider} AI")
-                        except Exception as e:
-                            print_lg("Failed to extract skills:", e)
-                            skills = "Error extracting skills"
-                        ##<
-
                     uploaded = False
                     # Case 1: Easy Apply Button
                     if try_xp(driver, ".//button[contains(@class,'jobs-apply-button') and contains(@class, 'artdeco-button--3') and contains(@aria-label, 'Easy')]"):
@@ -1142,7 +1143,16 @@ def apply_to_jobs(search_terms: list[str], per_term_cap: int = None, force_under
                             try:
                                 errored = ""
                                 modal = find_by_class(driver, "jobs-easy-apply-modal")
-                                wait_span_click(modal, "Next", 1)
+                                # Initial step may already be on questions/review; avoid noisy failure logs.
+                                next_btn = try_xp(modal, './/span[normalize-space(.)="Next"]', False)
+                                if not next_btn:
+                                    next_btn = try_xp(modal, './/button[contains(span, "Next")]', False)
+                                if next_btn:
+                                    try:
+                                        next_btn.click()
+                                        buffer(click_gap)
+                                    except Exception:
+                                        pass
                                 # if description != "Unknown":
                                 #     resume = create_custom_resume(description)
                                 resume = "Previous resume"
@@ -1174,7 +1184,14 @@ def apply_to_jobs(search_terms: list[str], per_term_cap: int = None, force_under
                                 if questions_list and errored != "stuck": 
                                     print_lg("Answered the following questions...", questions_list)
                                     print("\n\n" + "\n".join(str(question) for question in questions_list) + "\n\n")
-                                wait_span_click(driver, "Review", 1, scrollTop=True)
+                                review_btn = try_xp(driver, './/span[normalize-space(.)="Review"]', False)
+                                if review_btn:
+                                    try:
+                                        scroll_to_view(driver, review_btn, top=True)
+                                        review_btn.click()
+                                        buffer(click_gap)
+                                    except Exception:
+                                        pass
                                 cur_pause_before_submit = pause_before_submit
                                 if errored != "stuck" and cur_pause_before_submit:
                                     decision = pyautogui.confirm('1. Please verify your information.\n2. If you edited something, please return to this final screen.\n3. DO NOT CLICK "Submit Application".\n\n\n\n\nYou can turn off "Pause before submit" setting in config.py\nTo TEMPORARILY disable pausing, click "Disable Pause"', "Confirm your information",["Disable Pause", "Discard Application", "Submit Application"])
@@ -1289,6 +1306,7 @@ def main() -> None:
     try:
         global linkedIn_tab, tabs_count, useNewResume, aiClient
         alert_title = "Error Occurred. Closing Browser!"
+        print_lg(f"---- main() started at {datetime.now()} ----")
         validate_config()
         
         if not os.path.exists(default_resume_path):

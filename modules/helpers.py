@@ -19,6 +19,7 @@ version:    26.01.20.5.08
 
 import os
 import sys
+import re
 import json
 import pathlib
 
@@ -277,7 +278,12 @@ def convert_to_json(data) -> dict:
     Function to convert data to JSON, if unsuccessful, returns `{"error": "Unable to parse the response as JSON", "data": data}`
     '''
     try:
-        result_json = json.loads(data)
+        # Strip markdown code fences (```json ... ``` or ``` ... ```) that some models wrap JSON in
+        text = data.strip() if isinstance(data, str) else data
+        if isinstance(text, str) and text.startswith("```"):
+            text = re.sub(r'^```(?:json)?\s*', '', text)
+            text = re.sub(r'```\s*$', '', text).strip()
+        result_json = json.loads(text)
         return result_json
     except json.JSONDecodeError:
         return {"error": "Unable to parse the response as JSON", "data": data}
