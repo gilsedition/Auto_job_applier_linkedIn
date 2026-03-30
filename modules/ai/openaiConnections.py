@@ -172,7 +172,12 @@ def ai_completion(client: OpenAI, messages: list[dict], response_format: dict = 
     if model_supports_temperature(llm_model):
         params["temperature"] = temperature
     if response_format and llm_spec in ["openai", "openai-like"]:
-        params["response_format"] = response_format
+        # StepFun (and many OpenRouter providers) only support "text" or "json_object" —
+        # downgrade json_schema to json_object for non-native OpenAI endpoints.
+        if response_format.get("type") == "json_schema" and llm_spec == "openai-like":
+            params["response_format"] = {"type": "json_object"}
+        else:
+            params["response_format"] = response_format
     # Reasoning models (e.g. stepfun/step-3.5-flash:free) need reasoning enabled and enough
     # tokens to finish thinking before producing content — otherwise content returns None.
     params["max_tokens"] = 4096
