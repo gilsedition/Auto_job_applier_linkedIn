@@ -224,9 +224,10 @@ def set_search_location() -> None:
             print_lg("Failed to update search location, continuing with default location!", e)
 
 
-def apply_filters() -> None:
+def apply_filters(force_under_10: bool = False) -> None:
     '''
-    Function to apply job search filters
+    Function to apply job search filters.
+    force_under_10: when True, enables the "Under 10 applicants" filter regardless of config.
     '''
     set_search_location()
 
@@ -258,7 +259,7 @@ def apply_filters() -> None:
         multi_sel_noWait(driver, job_titles)
         if job_function or job_titles: buffer(recommended_wait)
 
-        if under_10_applicants: boolean_button_click(driver, actions, "Under 10 applicants")
+        if under_10_applicants or force_under_10: boolean_button_click(driver, actions, "Under 10 applicants")
         if in_your_network: boolean_button_click(driver, actions, "In your network")
         if fair_chance_employer: boolean_button_click(driver, actions, "Fair Chance Employer")
 
@@ -962,7 +963,13 @@ def discard_job() -> None:
 
 
 # Function to apply to jobs
-def apply_to_jobs(search_terms: list[str]) -> None:
+def apply_to_jobs(search_terms: list[str], per_term_cap: int = None, force_under_10: bool = False) -> int:
+    '''
+    Apply to jobs across all search terms.
+    per_term_cap: max applications per search term this pass (overrides session_switch_cap if lower).
+    force_under_10: override config to require "Under 10 applicants" filter for this pass.
+    Returns total applications submitted this pass.
+    '''
     applied_jobs = get_applied_job_ids()
     rejected_jobs = set()
     blacklisted_companies = set()
@@ -971,7 +978,11 @@ def apply_to_jobs(search_terms: list[str]) -> None:
     # Vary interaction tempo and cap run size to reduce aggressive behavior patterns.
     session_click_gap = round(uniform(1.2, 3.2), 1)
     session_switch_cap = min(switch_number, 6)   # Hard safety cap: never exceed 6/term regardless of config (30 total with 10 terms)
-    print_lg(f"Session pacing: click_gap={session_click_gap}s, max applies/search={session_switch_cap}")
+    if per_term_cap is not None:
+        session_switch_cap = min(per_term_cap, session_switch_cap)
+    pass_label = "Pass 1 [<10 applicants]" if force_under_10 else "Pass 2 [all jobs]"
+    print_lg(f"Session pacing: click_gap={session_click_gap}s, max applies/search={session_switch_cap} | {pass_label}")
+    pass_total = 0
 
     if randomize_search_order:  shuffle(search_terms)
     last_uploaded_resume = None  # track which resume was last uploaded to trigger re-upload on term switch
@@ -985,7 +996,7 @@ def apply_to_jobs(search_terms: list[str]) -> None:
         print_lg("\n________________________________________________________________________________________________________________________\n")
         print_lg(f'\n>>>> Now searching for "{searchTerm}" <<<<\n\n')
 
-        apply_filters()
+        apply_filters(force_under_10=force_under_10)
 
         current_count = 0
         try:
@@ -1210,6 +1221,7 @@ def apply_to_jobs(search_terms: list[str]) -> None:
 
                     print_lg(f'Successfully saved "{title} | {company}" job. Job ID: {job_id} info')
                     current_count += 1
+                    pass_total += 1
                     if application_link == "Easy Applied": easy_applied_count += 1
                     else:   external_jobs_count += 1
                     applied_jobs.add(job_id)
@@ -1239,6 +1251,8 @@ def apply_to_jobs(search_terms: list[str]) -> None:
                 print_lg(f"Failed to get page source, browser might have crashed. {page_source_error}")
             # print_lg(e)
 
+    return pass_total
+
         
 def run(total_runs: int) -> int:
     if dailyEasyApplyLimitReached:
@@ -1247,7 +1261,15 @@ def run(total_runs: int) -> int:
     print_lg(f"Date and Time: {datetime.now()}")
     print_lg(f"Cycle number: {total_runs}")
     print_lg(f"Currently looking for jobs posted within '{date_posted}' and sorting them by '{sort_by}'")
-    apply_to_jobs(search_terms)
+
+    # Two-pass strategy: prioritise low-competition jobs first, then fill remaining budget.
+    total_daily_cap = switch_number * len(search_terms)   # e.g. 3 × 10 = 30
+    pass1_per_term = max(1, switch_number // 2)           # first pass uses ~half the per-term budget on <10 applicant jobs
+    pass1_total = apply_to_jobs(search_terms, per_term_cap=pass1_per_term, force_under_10=True)
+    remaining_per_term = max(0, switch_number - pass1_per_term)
+    if remaining_per_term > 0 and not dailyEasyApplyLimitReached:
+        print_lg(f"Pass 1 complete ({pass1_total} applied). Starting Pass 2 for remaining {remaining_per_term}/term slots...")
+        apply_to_jobs(search_terms, per_term_cap=remaining_per_term, force_under_10=False)
     print_lg("########################################################################################################################\n")
     if not dailyEasyApplyLimitReached:
         print_lg("Sleeping for 10 min...")
