@@ -576,7 +576,7 @@ def get_job_description(
 def upload_resume(modal: WebElement, resume: str) -> tuple[bool, str]:
     try:
         modal.find_element(By.NAME, "file").send_keys(os.path.abspath(resume))
-        return True, os.path.basename(resume)  # return actual filename, not hardcoded default
+        return True, os.path.join(os.path.basename(os.path.dirname(resume)), os.path.basename(resume))
     except: return False, "Previous resume"
 
 
@@ -1085,20 +1085,21 @@ def screenshot(driver: WebDriver, job_id: str, failedAt: str) -> str:
 def submitted_jobs(job_id: str, title: str, company: str, work_location: str, work_style: str, description: str, experience_required: int | Literal['Unknown', 'Error in extraction'], 
                    skills: dict[str, list[str]] | str, hr_name: str | Literal['Unknown'], hr_link: str | Literal['Unknown'], resume: str, 
                    reposted: bool, date_listed: datetime | Literal['Unknown'], date_applied:  datetime | Literal['Pending'], job_link: str, application_link: str, 
-                   questions_list: set | None, connect_request: Literal['In Development']) -> None:
+                   questions_list: set | None, connect_request: Literal['In Development'], search_term: str = '') -> None:
     '''
     Function to create or update the Applied jobs CSV file, once the application is submitted successfully
     '''
+    questions_formatted = ' | '.join(f"{q[0]}: {q[1]}" for q in questions_list) if questions_list else ''
     try:
         with open(file_name, mode='a', newline='', encoding='utf-8') as csv_file:
-            fieldnames = ['Job ID', 'Title', 'Company', 'Work Location', 'Work Style', 'About Job', 'Experience required', 'Skills required', 'HR Name', 'HR Link', 'Resume', 'Re-posted', 'Date Posted', 'Date Applied', 'Job Link', 'External Job link', 'Questions Found', 'Connect Request']
+            fieldnames = ['Job ID', 'Title', 'Company', 'Work Location', 'Work Style', 'About Job', 'Experience required', 'Skills required', 'HR Name', 'HR Link', 'Resume', 'Search Term', 'Re-posted', 'Date Posted', 'Date Applied', 'Job Link', 'External Job link', 'Questions Found', 'Connect Request']
             writer = csv.DictWriter(csv_file, fieldnames=fieldnames)
             if csv_file.tell() == 0: writer.writeheader()
             writer.writerow({'Job ID':truncate_for_csv(job_id), 'Title':truncate_for_csv(title), 'Company':truncate_for_csv(company), 'Work Location':truncate_for_csv(work_location), 'Work Style':truncate_for_csv(work_style), 
                             'About Job':truncate_for_csv(description[:300] + ("..." if len(description) > 300 else "")), 'Experience required': truncate_for_csv(experience_required), 'Skills required':truncate_for_csv(skills), 
-                                'HR Name':truncate_for_csv(hr_name), 'HR Link':truncate_for_csv(hr_link), 'Resume':truncate_for_csv(resume), 'Re-posted':truncate_for_csv(reposted), 
+                                'HR Name':truncate_for_csv(hr_name), 'HR Link':truncate_for_csv(hr_link), 'Resume':truncate_for_csv(resume), 'Search Term':truncate_for_csv(search_term), 'Re-posted':truncate_for_csv(reposted), 
                                 'Date Posted':truncate_for_csv(date_listed), 'Date Applied':truncate_for_csv(date_applied), 'Job Link':truncate_for_csv(job_link), 
-                                'External Job link':truncate_for_csv(application_link), 'Questions Found':truncate_for_csv(questions_list), 'Connect Request':truncate_for_csv(connect_request)})
+                                'External Job link':truncate_for_csv(application_link), 'Questions Found':truncate_for_csv(questions_formatted), 'Connect Request':truncate_for_csv(connect_request)})
         csv_file.close()
     except Exception as e:
         print_lg("Failed to update submitted jobs list!", e)
@@ -1302,7 +1303,7 @@ def apply_to_jobs(search_terms: list[str], per_term_cap: int = None, force_under
                                         pass
                                 # if description != "Unknown":
                                 #     resume = create_custom_resume(description)
-                                resume = "Previous resume"
+                                resume = os.path.join(os.path.basename(os.path.dirname(active_resume)), os.path.basename(active_resume))
                                 next_button = True
                                 questions_list = set()
                                 next_counter = 0
@@ -1378,7 +1379,7 @@ def apply_to_jobs(search_terms: list[str], per_term_cap: int = None, force_under
                             return
                         if skip: continue
 
-                    submitted_jobs(job_id, title, company, work_location, work_style, description, experience_required, skills, hr_name, hr_link, resume, reposted, date_listed, date_applied, job_link, application_link, questions_list, connect_request)
+                    submitted_jobs(job_id, title, company, work_location, work_style, description, experience_required, skills, hr_name, hr_link, resume, reposted, date_listed, date_applied, job_link, application_link, questions_list, connect_request, searchTerm)
                     if uploaded:
                         useNewResume = False
                         last_uploaded_resume = active_resume  # remember what was uploaded for this term
