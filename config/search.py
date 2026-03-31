@@ -94,6 +94,11 @@ about_company_good_words = []      # (dynamic multiple search) or leave empty as
 # Skip jobs whose TITLE contains any of these words/phrases. Checked early (before loading description), so it saves time. Case Insensitive.
 title_bad_words = ["IT Analyst", "Systems Analyst", "Data Engineer", "Software Engineer", "Software Developer", "DevOps", "Machine Learning", "Data Science", "Cybersecurity", "Network Engineer", "Cloud Engineer"]   # or leave empty as []. Ex: ["IT Analyst", "Software Engineer"]
 
+# Minimum LinkedIn skills match percentage required to apply. Uses LinkedIn's own "X of Y skills match" indicator on the job detail panel.
+# Set to 0 or -1 to disable. Requires your skills to be filled in on your LinkedIn profile.
+# If the indicator is absent (LinkedIn didn't compute a match), the job is NOT skipped.
+min_skills_match_percentage = 30   # 0 to 100, or -1 to disable
+
 # Avoid applying to these companies if they have these bad words in their 'Job Description' section...  (In development)
 bad_words = ["US Citizen", "USA Citizen", "No C2C", "No Corp2Corp", "Software Engineer", "Software Developer", "Machine Learning", "Data Science", "DevOps", "Cybersecurity", "Security Clearance", "Polygraph"]                     # (dynamic multiple search) or leave empty as []. Case Insensitive. Ex: ["word_1", "phrase 1", "word word", "polygraph", "US Citizenship", "Security Clearance"]
 

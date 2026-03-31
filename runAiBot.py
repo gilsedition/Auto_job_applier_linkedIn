@@ -816,6 +816,21 @@ def check_blacklist(rejected_jobs: set, job_id: str, company: str, blacklisted_c
 
 
 
+def get_linkedin_skills_match() -> tuple[int, int] | None:
+    '''
+    Reads LinkedIn's built-in "X of Y skills match" indicator from the job detail panel.
+    Returns (matched, total) as integers, or None if the element is absent or unparseable.
+    '''
+    try:
+        el = driver.find_element(By.CLASS_NAME, "job-details-fit-level-preferences")
+        m = re.search(r'(\d+)\s+of\s+(\d+)\s+skills?\s+match', el.text, re.IGNORECASE)
+        if m:
+            return int(m.group(1)), int(m.group(2))
+    except Exception:
+        pass
+    return None
+
+
 # Function to extract years of experience required from About Job
 def extract_years_of_experience(text: str) -> int:
     # Extract all patterns like '10+ years', '5 years', '3-5 years', etc.
@@ -1522,7 +1537,19 @@ def apply_to_jobs(search_terms: list[str], per_term_cap: int = None, force_under
                         print_lg("Failed to scroll to About Company!")
                         # print_lg(e)
 
-
+                    if min_skills_match_percentage > 0:
+                        skills_match = get_linkedin_skills_match()
+                        if skills_match is not None:
+                            matched, total = skills_match
+                            pct = int(matched / total * 100) if total > 0 else 100
+                            print_lg(f"LinkedIn skills match: {matched} of {total} ({pct}%)")
+                            if pct < min_skills_match_percentage:
+                                reason = f"Skills match too low: {matched} of {total} ({pct}% < {min_skills_match_percentage}% required)"
+                                print_lg(reason + " Skipping this job!")
+                                failed_job(job_id, job_link, resume, date_listed, "Low skills match", reason, "Skipped", screenshot_name)
+                                rejected_jobs.add(job_id)
+                                skip_count += 1
+                                continue
 
                     # Hiring Manager info
                     try:
