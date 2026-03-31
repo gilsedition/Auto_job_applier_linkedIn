@@ -541,23 +541,24 @@ def get_job_description(
         skip = False
         skipReason = None
         skipMessage = None
+        desc_snippet = jobDescription[:300] + ("..." if len(jobDescription) > 300 else "")
         for word in bad_words:
             if word.lower() in jobDescriptionLow:
-                skipMessage = f'\n{jobDescription}\n\nContains bad word "{word}". Skipping this job!\n'
+                skipMessage = f'Contains bad word "{word}". Skipping this job!\nDescription snippet: "{desc_snippet}"'
                 skipReason = "Found a Bad Word in About Job"
                 skip = True
                 break
         if not skip and security_clearance == False and ('polygraph' in jobDescriptionLow or 'clearance' in jobDescriptionLow or 'secret' in jobDescriptionLow):
-            skipMessage = f'\n{jobDescription}\n\nFound "Clearance" or "Polygraph". Skipping this job!\n'
+            skipMessage = f'Found "Clearance" or "Polygraph". Skipping this job!\nDescription snippet: "{desc_snippet}"'
             skipReason = "Asking for Security clearance"
             skip = True
         if not skip:
             if did_masters and 'master' in jobDescriptionLow:
-                print_lg(f'Found the word "master" in \n{jobDescription}')
+                print_lg(f'Found the word "master".\nDescription snippet: "{desc_snippet}"')
                 found_masters = 2
             experience_required = extract_years_of_experience(jobDescription)
             if current_experience > -1 and experience_required > current_experience + found_masters:
-                skipMessage = f'\n{jobDescription}\n\nExperience required {experience_required} > Current Experience {current_experience + found_masters}. Skipping this job!\n'
+                skipMessage = f'Experience required {experience_required} > Current Experience {current_experience + found_masters}. Skipping this job!\nDescription snippet: "{desc_snippet}"'
                 skipReason = "Required experience is high"
                 skip = True
     except Exception as e:
@@ -1094,7 +1095,7 @@ def submitted_jobs(job_id: str, title: str, company: str, work_location: str, wo
             writer = csv.DictWriter(csv_file, fieldnames=fieldnames)
             if csv_file.tell() == 0: writer.writeheader()
             writer.writerow({'Job ID':truncate_for_csv(job_id), 'Title':truncate_for_csv(title), 'Company':truncate_for_csv(company), 'Work Location':truncate_for_csv(work_location), 'Work Style':truncate_for_csv(work_style), 
-                            'About Job':truncate_for_csv(description), 'Experience required': truncate_for_csv(experience_required), 'Skills required':truncate_for_csv(skills), 
+                            'About Job':truncate_for_csv(description[:300] + ("..." if len(description) > 300 else "")), 'Experience required': truncate_for_csv(experience_required), 'Skills required':truncate_for_csv(skills), 
                                 'HR Name':truncate_for_csv(hr_name), 'HR Link':truncate_for_csv(hr_link), 'Resume':truncate_for_csv(resume), 'Re-posted':truncate_for_csv(reposted), 
                                 'Date Posted':truncate_for_csv(date_listed), 'Date Applied':truncate_for_csv(date_applied), 'Job Link':truncate_for_csv(job_link), 
                                 'External Job link':truncate_for_csv(application_link), 'Questions Found':truncate_for_csv(questions_list), 'Connect Request':truncate_for_csv(connect_request)})
