@@ -13,6 +13,7 @@ Click on above image to watch the demo or use this link https://youtu.be/gMbB1fW
 - [Index](#-content)
 - [Install](#%EF%B8%8F-how-to-install)
 - [Configure](#-how-to-configure)
+- [Resume Mapping](#resume-mapping)
 - [Contributor Guidelines](#‍-contributor-guidelines)
 - [Updates](%EF%B8%8F-major-updates-history)
 - [Disclaimer](#-disclaimer)
@@ -56,6 +57,49 @@ Click on above image to watch the tutorial for installation and configuration or
 7. Run `runAiBot.py` and see the magic happen.
 8. To run the Applied Jobs history UI, run `app.py` and open web browser on `http://localhost:5000`.
 8. If you have questions or need help setting it up or to talk in general, join the github server: https://discord.gg/fFp7uUzWCY
+
+### Resume Mapping
+The bot can upload different resumes for different search terms.
+
+How it works:
+- The default fallback resume is `all resumes/default/resume.pdf`.
+- The bot checks each search term against the keyword map in `/config/questions.py`.
+- Matching is case-insensitive.
+- The first matching keyword wins.
+- If no keyword matches, or the mapped PDF does not exist, the bot falls back to the default resume.
+
+Current configured mapping:
+
+| Search term | Matched keyword | Resume used |
+| --- | --- | --- |
+| `Billing Analyst` | `Billing` | `all resumes/billing/resume.pdf` |
+| `Accounts Payable Analyst` | `Accounts Payable` | `all resumes/accounts-payable/resume.pdf` |
+| `Finance Operations Analyst` | `Finance` | `all resumes/finance/resume.pdf` |
+| `Billing Operations Specialist` | `Billing` | `all resumes/billing/resume.pdf` |
+| `AP Specialist` | `AP Specialist` | `all resumes/accounts-payable/resume.pdf` |
+| `Invoice Analyst` | `Invoice` | `all resumes/billing/resume.pdf` |
+| `Finance Analyst` | `Finance` | `all resumes/finance/resume.pdf` |
+| `Revenue Operations Analyst` | `Revenue` | `all resumes/finance/resume.pdf` |
+| `Accounts Receivable Analyst` | `Accounts Receivable` | `all resumes/accounts-payable/resume.pdf` |
+| `Financial Operations Specialist` | `Financial` | `all resumes/finance/resume.pdf` |
+
+Active keyword map in `/config/questions.py`:
+
+| Keyword | Resume path |
+| --- | --- |
+| `Billing` | `all resumes/billing/resume.pdf` |
+| `Invoice` | `all resumes/billing/resume.pdf` |
+| `Accounts Payable` | `all resumes/accounts-payable/resume.pdf` |
+| `AP Specialist` | `all resumes/accounts-payable/resume.pdf` |
+| `Accounts Receivable` | `all resumes/accounts-payable/resume.pdf` |
+| `Revenue` | `all resumes/finance/resume.pdf` |
+| `Finance` | `all resumes/finance/resume.pdf` |
+| `Financial` | `all resumes/finance/resume.pdf` |
+
+Example:
+- `Finance Analyst` matches `Finance`, so the bot uses `all resumes/finance/resume.pdf`.
+- `Invoice Analyst` matches `Invoice`, so the bot uses `all resumes/billing/resume.pdf`.
+- If you add a new search term that does not match any keyword, the bot uses `all resumes/default/resume.pdf`.
 
 [back to index](#-content)
 
