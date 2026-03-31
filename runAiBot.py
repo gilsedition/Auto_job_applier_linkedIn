@@ -20,6 +20,7 @@ import os
 import csv
 import re
 import time
+import unicodedata
 import pyautogui
 
 # Set CSV field size limit to prevent field size errors
@@ -110,7 +111,90 @@ def human_type(element: WebElement, text: str, min_delay: float = 0.03, max_dela
 
 
 def normalize_select_text(text: str) -> str:
-    return re.sub(r"\s+", " ", (text or "")).strip().casefold()
+    normalized_text = unicodedata.normalize("NFKD", text or "")
+    normalized_text = normalized_text.encode("ascii", "ignore").decode("ascii")
+    return re.sub(r"\s+", " ", normalized_text).strip().casefold()
+
+
+def is_select_placeholder(option_text: str) -> bool:
+    normalized_option = normalize_select_text(option_text)
+    if not normalized_option:
+        return True
+
+    placeholder_options = {
+        "select an option",
+        "selecteer een optie",
+        "seleccione una opcion",
+        "selecciona una opcion",
+        "seleccione una opcion",
+        "seleciona uma opcao",
+        "selecione uma opcao",
+        "selectionnez une option",
+        "seleziona un opzione",
+        "wahlen sie eine option",
+    }
+    return normalized_option in placeholder_options
+
+
+def configured_experience_years() -> int:
+    experience_values = []
+    if isinstance(current_experience, int) and current_experience >= 0:
+        experience_values.append(current_experience)
+    try:
+        experience_values.append(int(str(years_of_experience).strip()))
+    except Exception:
+        pass
+    return max(experience_values) if experience_values else 0
+
+
+def extract_experience_threshold(label: str) -> tuple[int, bool] | None:
+    normalized_label = normalize_select_text(label)
+    word_to_number = {
+        "one": 1,
+        "un": 1,
+        "una": 1,
+        "two": 2,
+        "dos": 2,
+        "three": 3,
+        "tres": 3,
+        "four": 4,
+        "cuatro": 4,
+        "five": 5,
+        "cinco": 5,
+        "six": 6,
+        "seis": 6,
+    }
+    match = re.search(
+        r"(more than|over|at least|minimum|minimum of|min\.?|mas de|al menos)\s+(\d+|one|un|una|two|dos|three|tres|four|cuatro|five|cinco|six|seis)\s+(?:year|years|ano|anos)",
+        normalized_label,
+    )
+    if not match:
+        return None
+
+    comparator = match.group(1)
+    raw_value = match.group(2)
+    threshold = int(raw_value) if raw_value.isdigit() else word_to_number.get(raw_value)
+    if threshold is None:
+        return None
+
+    is_strict = comparator in {"more than", "over", "mas de"}
+    return threshold, is_strict
+
+
+def should_force_binary_answer(label: str) -> bool:
+    normalized_label = normalize_select_text(label)
+    if extract_experience_threshold(normalized_label) and any(term in normalized_label for term in ["experience", "experiencia"]):
+        return True
+    if any(term in normalized_label for term in ["interested in", "interesado", "interesada"]) and any(term in normalized_label for term in ["contract", "contrato"]):
+        return True
+    return False
+
+
+def has_yes_no_options(option_texts: list[str]) -> bool:
+    normalized_options = [normalize_select_text(option_text) for option_text in option_texts]
+    yes_markers = ["yes", "si", "oui", "ja", "sim"]
+    no_markers = ["no", "non", "nein", "nao"]
+    return any(any(marker in option for marker in yes_markers) for option in normalized_options) and any(any(marker in option for marker in no_markers) for option in normalized_options)
 
 
 def get_selected_option_text(question: WebElement, fallback: str = "") -> str:
@@ -593,6 +677,7 @@ def get_resume_for_term(search_term: str) -> str:
 
 # Function to answer common questions for Easy Apply
 def answer_common_questions(label: str, answer: str) -> str:
+    experience_threshold = extract_experience_threshold(label)
     if 'sponsorship' in label or 'visa' in label: answer = require_visa
     elif any(phrase in label for phrase in ['living in', 'based in', 'reside in', 'residing in', 'located in', 'authorized to work in', 'allowed to work in', 'right to work in', 'permission to work in', 'eligible to work in', 'currently in', 'live in']):
         # Return No only when label explicitly names a non-EU jurisdiction.
@@ -600,6 +685,13 @@ def answer_common_questions(label: str, answer: str) -> str:
         non_eu = any(c in label for c in ['united states', ' usa', ' us ', 'canada', 'australia', 'india', 'china', 'brazil', 'japan', 'south korea', 'singapore', 'new zealand', 'united kingdom', ' uk '])
         eu_match = any(term in label for term in [current_country.lower(), 'european union', 'europe', 'schengen', 'eea', ' eu ', ' eu?', ' eu.', 'eu/'])
         answer = 'No' if non_eu and not eu_match else 'Yes'
+    elif experience_threshold and any(term in label for term in ['experience', 'experiencia']):
+        threshold, is_strict = experience_threshold
+        profile_experience = configured_experience_years()
+        meets_threshold = profile_experience > threshold if is_strict else profile_experience >= threshold
+        answer = 'Yes' if meets_threshold else 'No'
+    elif any(term in label for term in ['interested in', 'interesado', 'interesada']) and any(term in label for term in ['contract', 'contrato']):
+        answer = 'Yes'
     elif any(phrase in label for phrase in ['prevent you from working', 'conditions or agreements prevent', 'conditions prevent you', 'agreement prevent']):
         # "Would any employment conditions/agreements prevent you from working here?" → No
         answer = 'No'
@@ -638,7 +730,8 @@ def answer_questions(modal: WebElement, questions_list: set, work_location: str,
                 options = "".join([f' "{option}",' for option in optionsText])
             prev_answer = selected_option
             answer = prev_answer
-            if overwrite_previous_answers or selected_option == "Select an option" or label == "phone country code" or 'email' in label or ('english' in label and 'level' in label):
+            force_binary_answer = should_force_binary_answer(label) and has_yes_no_options(optionsText)
+            if overwrite_previous_answers or is_select_placeholder(selected_option) or force_binary_answer or label == "phone country code" or 'email' in label or ('english' in label and 'level' in label):
                 if label == "phone country code" and not optionsText:
                     optionsText = [option.text for option in select.options]  # needed for fallback fuzzy match
                 if 'email' in label and not optionsText:
@@ -683,9 +776,9 @@ def answer_questions(modal: WebElement, questions_list: set, work_location: str,
                     if answer == 'Decline':
                         possible_answer_phrases = ["Decline", "not wish", "don't wish", "Prefer not", "not want"]
                     elif 'yes' in answer.lower():
-                        possible_answer_phrases = ["Yes", "Agree", "I do", "I have"]
+                        possible_answer_phrases = ["Yes", "Agree", "I do", "I have", "Si", "Sí", "Oui", "Ja", "Sim"]
                     elif 'no' in answer.lower():
-                        possible_answer_phrases = ["No", "Disagree", "I don't", "I do not"]
+                        possible_answer_phrases = ["No", "Disagree", "I don't", "I do not", "Non", "Nein", "Nao", "Não"]
                     else:
                         # Try partial matching for any answer
                         possible_answer_phrases = [answer]
@@ -697,9 +790,11 @@ def answer_questions(modal: WebElement, questions_list: set, work_location: str,
                     ##<
                     foundOption = False
                     for phrase in possible_answer_phrases:
+                        normalized_phrase = normalize_select_text(phrase)
                         for option in optionsText:
+                            normalized_option = normalize_select_text(option)
                             # Check if phrase is in option or option is in phrase (bidirectional matching)
-                            if phrase.lower() in option.lower() or option.lower() in phrase.lower():
+                            if normalized_phrase in normalized_option or normalized_option in normalized_phrase:
                                 select.select_by_visible_text(option)
                                 answer = option
                                 foundOption = True
@@ -745,7 +840,8 @@ def answer_questions(modal: WebElement, questions_list: set, work_location: str,
                 label_org += f' {options_labels[-1]},'
 
             is_work_auth = any(phrase in label for phrase in ['authorized to work', 'allowed to work', 'right to work', 'permission to work', 'eligible to work', 'legally authorized', 'legally entitled', 'living in', 'based in', 'reside in', 'residing in'])
-            if overwrite_previous_answers or prev_answer is None or is_work_auth:
+            force_binary_answer = should_force_binary_answer(label) and has_yes_no_options(options_labels)
+            if overwrite_previous_answers or prev_answer is None or is_work_auth or force_binary_answer:
                 if 'citizenship' in label or 'employment eligibility' in label: answer = us_citizenship
                 elif 'veteran' in label or 'protected' in label: answer = veteran_status
                 elif 'disability' in label or 'handicapped' in label: 
