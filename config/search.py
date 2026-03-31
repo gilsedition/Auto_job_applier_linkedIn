@@ -91,6 +91,9 @@ about_company_bad_words = ["Crossover"]       # (dynamic multiple search) or lea
 # Skip checking for `about_company_bad_words` for these companies if they have these good words in their 'About Company' section... [Exceptions, For example, I want to apply to "Robert Half" although it's a staffing company]
 about_company_good_words = []      # (dynamic multiple search) or leave empty as []. Ex: ["Robert Half", "Dice"]
 
+# Skip jobs whose TITLE contains any of these words/phrases. Checked early (before loading description), so it saves time. Case Insensitive.
+title_bad_words = ["IT Analyst", "Systems Analyst", "Data Engineer", "Software Engineer", "Software Developer", "DevOps", "Machine Learning", "Data Science", "Cybersecurity", "Network Engineer", "Cloud Engineer"]   # or leave empty as []. Ex: ["IT Analyst", "Software Engineer"]
+
 # Avoid applying to these companies if they have these bad words in their 'Job Description' section...  (In development)
 bad_words = ["US Citizen", "USA Citizen", "No C2C", "No Corp2Corp", "Software Engineer", "Software Developer", "Machine Learning", "Data Science", "DevOps", "Cybersecurity", "Security Clearance", "Polygraph"]                     # (dynamic multiple search) or leave empty as []. Case Insensitive. Ex: ["word_1", "phrase 1", "word word", "polygraph", "US Citizenship", "Security Clearance"]
 

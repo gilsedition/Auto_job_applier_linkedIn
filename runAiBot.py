@@ -763,10 +763,16 @@ def get_job_main_details(job: WebElement, blacklisted_companies: set, rejected_j
     work_location = work_location[:work_location.rfind('(')].strip()
     
     # Skip if previously rejected due to blacklist or already applied
-    if company in blacklisted_companies:
+    title_low = title.lower()
+    for word in title_bad_words:
+        if word.lower() in title_low:
+            print_lg(f'Skipping "{title} | {company}" job (Bad word "{word}" in title). Job ID: {job_id}!')
+            skip = True
+            break
+    if not skip and company in blacklisted_companies:
         print_lg(f'Skipping "{title} | {company}" job (Blacklisted Company). Job ID: {job_id}!')
         skip = True
-    elif job_id in rejected_jobs: 
+    if not skip and job_id in rejected_jobs: 
         print_lg(f'Skipping previously rejected "{title} | {company}" job. Job ID: {job_id}!')
         skip = True
     try:
@@ -1623,9 +1629,9 @@ def apply_to_jobs(search_terms: list[str], per_term_cap: int = None, force_under
 
                             except NoSuchElementException: errored = "nose"
                             finally:
-                                if questions_list and errored != "stuck": 
-                                    print_lg("Answered the following questions...", questions_list)
-                                    print("\n\n" + "\n".join(str(question) for question in questions_list) + "\n\n")
+                                if questions_list and errored != "stuck":
+                                    formatted_qs = "\n".join(f"  Q: {q[0]}\n  A: {q[1]}" for q in questions_list)
+                                    print_lg(f"Answered the following questions...\n{formatted_qs}")
                                 review_btn = try_xp(driver, './/span[normalize-space(.)="Review"]', False)
                                 if review_btn:
                                     try:
