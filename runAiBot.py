@@ -44,10 +44,11 @@ from config.settings import *
 from modules.open_chrome import *
 from modules.helpers import *
 from modules.clickers_and_finders import *
+from modules.skills_extractor import count_extracted_skills, empty_skills_response, extract_skills_from_job_description
 from modules.validator import validate_config
 
 if use_AI:
-    from modules.ai.openaiConnections import ai_create_openai_client, ai_extract_skills, ai_answer_question, ai_close_openai_client
+    from modules.ai.openaiConnections import ai_create_openai_client, ai_answer_question, ai_close_openai_client
     from modules.ai.deepseekConnections import deepseek_create_client, deepseek_extract_skills, deepseek_answer_question
     if ai_provider == "gemini":
         from modules.ai.geminiConnections import gemini_create_client, gemini_extract_skills, gemini_answer_question
@@ -106,6 +107,130 @@ def human_type(element: WebElement, text: str, min_delay: float = 0.03, max_dela
     for ch in text:
         element.send_keys(ch)
         sleep(uniform(min_delay, max_delay))
+
+
+def normalize_select_text(text: str) -> str:
+    return re.sub(r"\s+", " ", (text or "")).strip().casefold()
+
+
+def get_selected_option_text(question: WebElement, fallback: str = "") -> str:
+    try:
+        select_element = try_xp(question, ".//select", False)
+        if not select_element:
+            return fallback
+        return Select(select_element).first_selected_option.text.strip()
+    except Exception:
+        return fallback
+
+
+def dispatch_select_value(select_element: WebElement, option_value: str, option_text: str) -> bool:
+    try:
+        return bool(select_element.parent.execute_script(
+            """
+            const select = arguments[0];
+            const targetValue = arguments[1];
+            const targetText = arguments[2];
+            let option = Array.from(select.options).find(opt => opt.value === targetValue);
+            if (!option) {
+                option = Array.from(select.options).find(opt => opt.text.trim() === targetText);
+            }
+            if (!option) {
+                return false;
+            }
+            option.selected = true;
+            select.value = option.value;
+            for (const eventName of ['input', 'change', 'blur']) {
+                select.dispatchEvent(new Event(eventName, { bubbles: true }));
+            }
+            return true;
+            """,
+            select_element,
+            option_value,
+            option_text,
+        ))
+    except Exception:
+        return False
+
+
+def force_select_option(question: WebElement, desired_text: str) -> str:
+    select_element = try_xp(question, ".//select", False)
+    if not select_element:
+        return desired_text
+
+    desired_norm = normalize_select_text(desired_text)
+    select_wrapper = Select(select_element)
+    matched_text = None
+    matched_value = None
+
+    for option in select_wrapper.options:
+        option_text = option.text.strip()
+        if normalize_select_text(option_text) == desired_norm:
+            matched_text = option_text
+            matched_value = option.get_attribute("value") or ""
+            break
+
+    if matched_text is None:
+        for option in select_wrapper.options:
+            option_text = option.text.strip()
+            option_norm = normalize_select_text(option_text)
+            if desired_norm in option_norm or option_norm in desired_norm:
+                matched_text = option_text
+                matched_value = option.get_attribute("value") or ""
+                break
+
+    if matched_text is None:
+        return get_selected_option_text(question, desired_text)
+
+    try:
+        select_wrapper.select_by_visible_text(matched_text)
+    except Exception:
+        dispatch_select_value(select_element, matched_value or matched_text, matched_text)
+
+    sleep(0.2)
+    selected_text = get_selected_option_text(question, matched_text)
+    if normalize_select_text(selected_text) == normalize_select_text(matched_text):
+        return selected_text
+
+    select_element = try_xp(question, ".//select", False)
+    if select_element and dispatch_select_value(select_element, matched_value or matched_text, matched_text):
+        sleep(0.2)
+        return get_selected_option_text(question, matched_text)
+
+    return selected_text
+
+
+def enforce_email_dropdowns(modal: WebElement, questions_list: set) -> set:
+    for question in modal.find_elements(By.XPATH, ".//div[@data-test-form-element]"):
+        select_element = try_xp(question, ".//select", False)
+        if not select_element:
+            continue
+
+        label_org = "Unknown"
+        try:
+            label = question.find_element(By.TAG_NAME, "label")
+            label_org = label.find_element(By.TAG_NAME, "span").text
+        except Exception:
+            pass
+
+        if 'email' not in label_org.lower():
+            continue
+
+        select_wrapper = Select(select_element)
+        prev_answer = select_wrapper.first_selected_option.text.strip()
+        options_text = [option.text for option in select_wrapper.options]
+        options = "".join([f' "{option}",' for option in options_text])
+
+        final_answer = force_select_option(question, email)
+        questions_list = {
+            item for item in questions_list
+            if not (len(item) >= 3 and item[2] == "select" and isinstance(item[0], str) and item[0].startswith(f'{label_org} ['))
+        }
+        questions_list.add((f'{label_org} [ {options} ]', final_answer, "select", prev_answer))
+
+        if normalize_select_text(final_answer) != normalize_select_text(email):
+            print_lg(f'WARNING: Email dropdown still selected "{final_answer}" instead of "{email}" for question labelled "{label_org}"')
+
+    return questions_list
 
 
 def has_security_challenge() -> bool:
@@ -511,6 +636,7 @@ def answer_questions(modal: WebElement, questions_list: set, work_location: str,
                 optionsText = [option.text for option in select.options]
                 options = "".join([f' "{option}",' for option in optionsText])
             prev_answer = selected_option
+            answer = prev_answer
             if overwrite_previous_answers or selected_option == "Select an option" or label == "phone country code" or 'email' in label or ('english' in label and 'level' in label):
                 if label == "phone country code" and not optionsText:
                     optionsText = [option.text for option in select.options]  # needed for fallback fuzzy match
@@ -584,6 +710,14 @@ def answer_questions(modal: WebElement, questions_list: set, work_location: str,
                         select.select_by_index(randint(1, rand_max) if rand_max > 1 else 0)
                         answer = select.first_selected_option.text
                         randomly_answered_questions.add((f'{label_org} [ {options} ]',"select"))
+                if 'email' in label:
+                    answer = force_select_option(Question, email)
+                    if normalize_select_text(answer) != normalize_select_text(email):
+                        print_lg(f'WARNING: Email select verification failed for "{label_org}". Current selection is "{answer}".')
+                else:
+                    answer = get_selected_option_text(Question, answer)
+            else:
+                answer = get_selected_option_text(Question, answer)
             questions_list.add((f'{label_org} [ {options} ]', answer, "select", prev_answer))
             continue
         
@@ -844,6 +978,7 @@ def answer_questions(modal: WebElement, questions_list: set, work_location: str,
 
 
     # Select todays date
+    questions_list = enforce_email_dropdowns(modal, questions_list)
     try_xp(driver, "//button[contains(@aria-label, 'This is today')]")
 
     # Collect important skills
@@ -947,7 +1082,7 @@ def screenshot(driver: WebDriver, job_id: str, failedAt: str) -> str:
 
 
 def submitted_jobs(job_id: str, title: str, company: str, work_location: str, work_style: str, description: str, experience_required: int | Literal['Unknown', 'Error in extraction'], 
-                   skills: list[str] | Literal['In Development'], hr_name: str | Literal['Unknown'], hr_link: str | Literal['Unknown'], resume: str, 
+                   skills: dict[str, list[str]] | str, hr_name: str | Literal['Unknown'], hr_link: str | Literal['Unknown'], resume: str, 
                    reposted: bool, date_listed: datetime | Literal['Unknown'], date_applied:  datetime | Literal['Pending'], job_link: str, application_link: str, 
                    questions_list: set | None, connect_request: Literal['In Development']) -> None:
     '''
@@ -1068,7 +1203,7 @@ def apply_to_jobs(search_terms: list[str], per_term_cap: int = None, force_under
                     hr_name = "Unknown"
                     connect_request = "In Development" # Still in development
                     date_listed = "Unknown"
-                    skills = "N/A"
+                    skills = empty_skills_response()
                     resume = "Pending"
                     reposted = False
                     questions_list = None
@@ -1134,6 +1269,17 @@ def apply_to_jobs(search_terms: list[str], per_term_cap: int = None, force_under
                         rejected_jobs.add(job_id)
                         skip_count += 1
                         continue
+
+                    try:
+                        skills = extract_skills_from_job_description(description)
+                        extracted_skill_count = count_extracted_skills(skills)
+                        if extracted_skill_count:
+                            print_lg(f"Extracted {extracted_skill_count} skill matches using NLP")
+                        else:
+                            print_lg("Skills extraction returned empty schema using NLP")
+                    except Exception as e:
+                        print_lg("Skills extraction failed using NLP, using empty schema", e)
+                        skills = empty_skills_response()
 
                     
                     uploaded = False

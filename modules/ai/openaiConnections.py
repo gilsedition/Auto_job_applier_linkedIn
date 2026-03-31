@@ -23,6 +23,7 @@ from config.search import security_clearance, did_masters
 
 from modules.helpers import print_lg, critical_error_log, convert_to_json
 from modules.ai.prompts import *
+from modules.skills_extractor import count_extracted_skills, empty_skills_response, extract_skills_from_job_description
 
 from pyautogui import confirm
 from openai import OpenAI
@@ -42,24 +43,6 @@ Open `secret.py` in `/config` folder to configure your AI API connections.
 
 ERROR:
 """
-
-
-def empty_skills_response() -> dict[str, list[str]]:
-    return {
-        "tech_stack": [],
-        "technical_skills": [],
-        "other_skills": [],
-        "required_skills": [],
-        "nice_to_have": [],
-    }
-
-
-def is_valid_skills_response(data: dict | None) -> bool:
-    if not isinstance(data, dict) or data.get("error"):
-        return False
-
-    required_keys = ["tech_stack", "technical_skills", "other_skills", "required_skills", "nice_to_have"]
-    return all(isinstance(data.get(key), list) for key in required_keys)
 
 # Function to show an AI error alert
 def ai_error_alert(message: str, stackTrace: str, title: str = "AI Connection Error") -> None:
@@ -247,39 +230,25 @@ def ai_completion(client: OpenAI, messages: list[dict], response_format: dict = 
     return result
 
 
-def ai_extract_skills(client: OpenAI, job_description: str, stream: bool = stream_output) -> dict | ValueError:
+def ai_extract_skills(client: OpenAI | None, job_description: str, stream: bool = stream_output) -> dict[str, list[str]]:
     """
-    Function to extract skills from job description using OpenAI API.
-    * Takes in `client` of type `OpenAI`
+    Function to extract skills from a job description using the local NLP pipeline.
+    * Keeps `client` for backward compatibility with existing callers.
     * Takes in `job_description` of type `str`
     * Takes in `stream` of type `bool` to indicate if it's a streaming call
     * Returns a `dict` object representing JSON response
     """
     print_lg("-- EXTRACTING SKILLS FROM JOB DESCRIPTION")
     try:
-        # Truncate to avoid overwhelming free-tier models with context/token limits
-        max_desc_chars = 3000
-        if len(job_description) > max_desc_chars:
-            print_lg(f"Job description truncated from {len(job_description)} to {max_desc_chars} chars for skills extraction")
-            job_description = job_description[:max_desc_chars]
-        prompts = [
-            extract_skills_prompt.format(job_description),
-            deepseek_extract_skills_prompt.format(job_description),
-        ]
-
-        for attempt, prompt in enumerate(prompts, start=1):
-            if attempt > 1:
-                print_lg("WARNING: Skills extraction returned invalid JSON, retrying with stricter JSON-only prompt...")
-
-            messages = [{"role": "user", "content": prompt}]
-            result = ai_completion(client, messages, response_format=extract_skills_response_format, stream=stream, use_reasoning=False)
-            if is_valid_skills_response(result):
-                return result
-
-        print_lg("WARNING: Skills extraction failed after retries, using empty skills schema")
-        return empty_skills_response()
+        result = extract_skills_from_job_description(job_description)
+        extracted_count = count_extracted_skills(result)
+        if extracted_count:
+            print_lg(f"NLP skills extraction completed with {extracted_count} matches")
+        else:
+            print_lg("NLP skills extraction returned empty schema")
+        return result
     except Exception as e:
-        ai_error_alert(f"Error occurred while extracting skills from job description. {apiCheckInstructions}", e)
+        critical_error_log("Error occurred while extracting skills from job description using NLP!", e)
         return empty_skills_response()
 
 
