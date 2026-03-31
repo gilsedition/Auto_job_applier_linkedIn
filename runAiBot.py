@@ -197,14 +197,14 @@ def has_yes_no_options(option_texts: list[str]) -> bool:
     return any(any(marker in option for marker in yes_markers) for option in normalized_options) and any(any(marker in option for marker in no_markers) for option in normalized_options)
 
 
-def get_selected_option_text(question: WebElement, fallback: str = "") -> str:
+def get_selected_option_text(question: WebElement, fallback: str = "", strict: bool = False) -> str:
     try:
         select_element = try_xp(question, ".//select", False)
         if not select_element:
-            return fallback
+            return "" if strict else fallback
         return Select(select_element).first_selected_option.text.strip()
     except Exception:
-        return fallback
+        return "" if strict else fallback
 
 
 def dispatch_select_value(select_element: WebElement, option_value: str, option_text: str) -> bool:
@@ -239,7 +239,7 @@ def dispatch_select_value(select_element: WebElement, option_value: str, option_
 def force_select_option(question: WebElement, desired_text: str) -> str:
     select_element = try_xp(question, ".//select", False)
     if not select_element:
-        return desired_text
+        return ""
 
     desired_norm = normalize_select_text(desired_text)
     select_wrapper = Select(select_element)
@@ -263,7 +263,7 @@ def force_select_option(question: WebElement, desired_text: str) -> str:
                 break
 
     if matched_text is None:
-        return get_selected_option_text(question, desired_text)
+        return get_selected_option_text(question, strict=True)
 
     try:
         select_wrapper.select_by_visible_text(matched_text)
@@ -271,14 +271,14 @@ def force_select_option(question: WebElement, desired_text: str) -> str:
         dispatch_select_value(select_element, matched_value or matched_text, matched_text)
 
     sleep(0.2)
-    selected_text = get_selected_option_text(question, matched_text)
+    selected_text = get_selected_option_text(question, strict=True)
     if normalize_select_text(selected_text) == normalize_select_text(matched_text):
         return selected_text
 
     select_element = try_xp(question, ".//select", False)
     if select_element and dispatch_select_value(select_element, matched_value or matched_text, matched_text):
         sleep(0.2)
-        return get_selected_option_text(question, matched_text)
+        return get_selected_option_text(question, strict=True)
 
     return selected_text
 
@@ -305,13 +305,16 @@ def enforce_email_dropdowns(modal: WebElement, questions_list: set) -> set:
         options = "".join([f' "{option}",' for option in options_text])
 
         final_answer = force_select_option(question, email)
+        logged_answer = final_answer if final_answer else "[selection not verified]"
         questions_list = {
             item for item in questions_list
             if not (len(item) >= 3 and item[2] == "select" and isinstance(item[0], str) and item[0].startswith(f'{label_org} ['))
         }
-        questions_list.add((f'{label_org} [ {options} ]', final_answer, "select", prev_answer))
+        questions_list.add((f'{label_org} [ {options} ]', logged_answer, "select", prev_answer))
 
-        if normalize_select_text(final_answer) != normalize_select_text(email):
+        if not final_answer:
+            print_lg(f'WARNING: Unable to verify email dropdown selection for question labelled "{label_org}"')
+        elif normalize_select_text(final_answer) != normalize_select_text(email):
             print_lg(f'WARNING: Email dropdown still selected "{final_answer}" instead of "{email}" for question labelled "{label_org}"')
 
     return questions_list
@@ -808,7 +811,10 @@ def answer_questions(modal: WebElement, questions_list: set, work_location: str,
                         randomly_answered_questions.add((f'{label_org} [ {options} ]',"select"))
                 if 'email' in label:
                     answer = force_select_option(Question, email)
-                    if normalize_select_text(answer) != normalize_select_text(email):
+                    if not answer:
+                        print_lg(f'WARNING: Unable to verify email dropdown selection for "{label_org}".')
+                        answer = "[selection not verified]"
+                    elif normalize_select_text(answer) != normalize_select_text(email):
                         print_lg(f'WARNING: Email select verification failed for "{label_org}". Current selection is "{answer}".')
                 else:
                     answer = get_selected_option_text(Question, answer)
