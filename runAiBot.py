@@ -102,6 +102,78 @@ aiClient = None
 about_company_for_ai = None # TODO extract about company for AI
 ##<
 
+SELECT_PLACEHOLDER_OPTIONS = {
+    "select an option",
+    "selecteer een optie",
+    "seleccione una opcion",
+    "selecciona una opcion",
+    "seleciona uma opcao",
+    "selecione uma opcao",
+    "selectionnez une option",
+    "seleziona un opzione",
+    "wahlen sie eine option",
+}
+YES_OPTION_WORDS = {"yes", "si", "oui", "ja", "sim"}
+YES_OPTION_PHRASES = ("agree", "i do", "i have")
+NO_OPTION_WORDS = {"no", "non", "nein", "nao"}
+NO_OPTION_PHRASES = ("disagree", "i do not", "i don't")
+DECLINE_OPTION_PHRASES = (
+    "decline",
+    "prefer not",
+    "do not wish",
+    "don't wish",
+    "not wish",
+    "do not want",
+    "don't want",
+    "not want",
+)
+NONE_LEVEL_WORDS = {"none", "ninguno", "ninguna", "aucun", "aucune", "nessuno", "nessuna", "keine"}
+PROFESSIONAL_LEVEL_WORDS = {"professional", "profesional", "professionnel", "profissional"}
+CONVERSATIONAL_LEVEL_WORDS = {"conversational", "conversation", "conversacion", "intermediate", "intermedio", "basic", "basico"}
+NATIVE_LEVEL_TOKEN_SETS = (
+    {"native", "bilingual"},
+    {"nativo", "bilingue"},
+    {"materna", "bilingue"},
+)
+PROFICIENCY_LABEL_MARKERS = (
+    "proficiency",
+    "proficiencia",
+    "fluency",
+    "level",
+    "nivel",
+    "language",
+    "idioma",
+    "langue",
+    "lingua",
+)
+ENGLISH_LANGUAGE_MARKERS = {"english", "ingles", "anglais", "inglese", "inglesa"}
+FRENCH_LANGUAGE_MARKERS = {"french", "francais", "frances", "francese"}
+KNOWN_LANGUAGE_MARKERS = ENGLISH_LANGUAGE_MARKERS | FRENCH_LANGUAGE_MARKERS | {
+    "polish",
+    "polaco",
+    "polonais",
+    "spanish",
+    "espanol",
+    "espanola",
+    "espanol",
+    "german",
+    "alemao",
+    "aleman",
+    "allemand",
+    "dutch",
+    "neerlandes",
+    "holandes",
+    "italian",
+    "italiano",
+    "portuguese",
+    "portugues",
+    "romanian",
+    "romano",
+    "flemish",
+    "arabic",
+    "arabe",
+}
+
 
 def human_type(element: WebElement, text: str, min_delay: float = 0.03, max_delay: float = 0.12) -> None:
     '''Type one character at a time with short random jitter.'''
@@ -116,24 +188,91 @@ def normalize_select_text(text: str) -> str:
     return re.sub(r"\s+", " ", normalized_text).strip().casefold()
 
 
+def get_select_tokens(text: str) -> set[str]:
+    return set(re.findall(r"[a-z]+", normalize_select_text(text)))
+
+
 def is_select_placeholder(option_text: str) -> bool:
     normalized_option = normalize_select_text(option_text)
     if not normalized_option:
         return True
+    return normalized_option in SELECT_PLACEHOLDER_OPTIONS
 
-    placeholder_options = {
-        "select an option",
-        "selecteer een optie",
-        "seleccione una opcion",
-        "selecciona una opcion",
-        "seleccione una opcion",
-        "seleciona uma opcao",
-        "selecione uma opcao",
-        "selectionnez une option",
-        "seleziona un opzione",
-        "wahlen sie eine option",
-    }
-    return normalized_option in placeholder_options
+
+def classify_select_option(option_text: str) -> str | None:
+    normalized_option = normalize_select_text(option_text)
+    if not normalized_option or is_select_placeholder(option_text):
+        return "placeholder"
+
+    option_tokens = get_select_tokens(option_text)
+    if any(phrase in normalized_option for phrase in DECLINE_OPTION_PHRASES):
+        return "decline"
+    if normalized_option in NONE_LEVEL_WORDS or bool(option_tokens & NONE_LEVEL_WORDS):
+        return "none"
+    if normalized_option in YES_OPTION_WORDS or bool(option_tokens & YES_OPTION_WORDS) or any(phrase in normalized_option for phrase in YES_OPTION_PHRASES):
+        return "yes"
+    if normalized_option in NO_OPTION_WORDS or bool(option_tokens & NO_OPTION_WORDS) or any(phrase in normalized_option for phrase in NO_OPTION_PHRASES):
+        return "no"
+    if bool(option_tokens & PROFESSIONAL_LEVEL_WORDS):
+        return "professional"
+    if any(native_tokens.issubset(option_tokens) for native_tokens in NATIVE_LEVEL_TOKEN_SETS):
+        return "native_or_bilingual"
+    if bool(option_tokens & CONVERSATIONAL_LEVEL_WORDS):
+        return "conversational"
+    return None
+
+
+def select_answer_matches(selected_text: str, desired_text: str) -> bool:
+    selected_norm = normalize_select_text(selected_text)
+    desired_norm = normalize_select_text(desired_text)
+    if not selected_norm or not desired_norm:
+        return False
+    if selected_norm == desired_norm:
+        return True
+
+    selected_kind = classify_select_option(selected_text)
+    desired_kind = classify_select_option(desired_text)
+    if selected_kind and desired_kind and selected_kind == desired_kind:
+        return True
+
+    if not selected_kind and not desired_kind and (desired_norm in selected_norm or selected_norm in desired_norm):
+        return True
+
+    return False
+
+
+def find_matching_select_option(select_wrapper: Select, desired_text: str) -> tuple[str, str] | None:
+    desired_norm = normalize_select_text(desired_text)
+    desired_kind = classify_select_option(desired_text)
+    semantic_match = None
+    partial_match = None
+
+    for option in select_wrapper.options:
+        option_text = option.text.strip()
+        option_norm = normalize_select_text(option_text)
+        if not option_norm:
+            continue
+        if option_norm == desired_norm:
+            return option_text, option.get_attribute("value") or ""
+        if desired_kind and classify_select_option(option_text) == desired_kind and semantic_match is None:
+            semantic_match = (option_text, option.get_attribute("value") or "")
+        if not desired_kind and not is_select_placeholder(option_text) and partial_match is None and desired_norm and (desired_norm in option_norm or option_norm in desired_norm):
+            partial_match = (option_text, option.get_attribute("value") or "")
+
+    return semantic_match or partial_match
+
+
+def get_language_proficiency_answer(label_text: str) -> str | None:
+    normalized_label = normalize_select_text(label_text)
+    if not any(marker in normalized_label for marker in PROFICIENCY_LABEL_MARKERS):
+        return None
+    if any(marker in normalized_label for marker in ENGLISH_LANGUAGE_MARKERS):
+        return "Native or Bilingual"
+    if any(marker in normalized_label for marker in FRENCH_LANGUAGE_MARKERS):
+        return "Professional"
+    if any(marker in normalized_label for marker in KNOWN_LANGUAGE_MARKERS):
+        return "None"
+    return None
 
 
 def configured_experience_years() -> int:
@@ -191,10 +330,8 @@ def should_force_binary_answer(label: str) -> bool:
 
 
 def has_yes_no_options(option_texts: list[str]) -> bool:
-    normalized_options = [normalize_select_text(option_text) for option_text in option_texts]
-    yes_markers = ["yes", "si", "oui", "ja", "sim"]
-    no_markers = ["no", "non", "nein", "nao"]
-    return any(any(marker in option for marker in yes_markers) for option in normalized_options) and any(any(marker in option for marker in no_markers) for option in normalized_options)
+    option_kinds = {classify_select_option(option_text) for option_text in option_texts}
+    return "yes" in option_kinds and "no" in option_kinds
 
 
 def get_selected_option_text(question: WebElement, fallback: str = "", strict: bool = False) -> str:
@@ -205,6 +342,29 @@ def get_selected_option_text(question: WebElement, fallback: str = "", strict: b
         return Select(select_element).first_selected_option.text.strip()
     except Exception:
         return "" if strict else fallback
+
+
+def get_question_label_text(question: WebElement) -> str:
+    label_selectors = [
+        ".//label[.//span]",
+        ".//label",
+        ".//legend",
+        ".//span[contains(@class, 'visually-hidden')]",
+        ".//*[@aria-label]",
+    ]
+    for selector in label_selectors:
+        try:
+            candidates = question.find_elements(By.XPATH, selector)
+        except Exception:
+            continue
+        for candidate in candidates:
+            try:
+                text = (candidate.text or candidate.get_attribute("aria-label") or "").strip()
+            except Exception:
+                text = ""
+            if text:
+                return text
+    return "Unknown"
 
 
 def dispatch_select_value(select_element: WebElement, option_value: str, option_text: str) -> bool:
@@ -236,34 +396,42 @@ def dispatch_select_value(select_element: WebElement, option_value: str, option_
         return False
 
 
+def dispatch_input_value(input_element: WebElement, desired_text: str) -> bool:
+    try:
+        return bool(input_element.parent.execute_script(
+            """
+            const input = arguments[0];
+            const targetValue = arguments[1];
+            const descriptor = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value');
+            input.focus();
+            if (descriptor && descriptor.set) {
+                descriptor.set.call(input, targetValue);
+            } else {
+                input.value = targetValue;
+            }
+            for (const eventName of ['input', 'change', 'blur']) {
+                input.dispatchEvent(new Event(eventName, { bubbles: true }));
+            }
+            return true;
+            """,
+            input_element,
+            desired_text,
+        ))
+    except Exception:
+        return False
+
+
 def force_select_option(question: WebElement, desired_text: str) -> str:
     select_element = try_xp(question, ".//select", False)
     if not select_element:
         return ""
 
-    desired_norm = normalize_select_text(desired_text)
     select_wrapper = Select(select_element)
-    matched_text = None
-    matched_value = None
-
-    for option in select_wrapper.options:
-        option_text = option.text.strip()
-        if normalize_select_text(option_text) == desired_norm:
-            matched_text = option_text
-            matched_value = option.get_attribute("value") or ""
-            break
-
-    if matched_text is None:
-        for option in select_wrapper.options:
-            option_text = option.text.strip()
-            option_norm = normalize_select_text(option_text)
-            if desired_norm in option_norm or option_norm in desired_norm:
-                matched_text = option_text
-                matched_value = option.get_attribute("value") or ""
-                break
-
-    if matched_text is None:
+    matched_option = find_matching_select_option(select_wrapper, desired_text)
+    if matched_option is None:
         return get_selected_option_text(question, strict=True)
+
+    matched_text, matched_value = matched_option
 
     try:
         select_wrapper.select_by_visible_text(matched_text)
@@ -272,50 +440,104 @@ def force_select_option(question: WebElement, desired_text: str) -> str:
 
     sleep(0.2)
     selected_text = get_selected_option_text(question, strict=True)
-    if normalize_select_text(selected_text) == normalize_select_text(matched_text):
+    if select_answer_matches(selected_text, desired_text) or select_answer_matches(selected_text, matched_text):
         return selected_text
 
     select_element = try_xp(question, ".//select", False)
     if select_element and dispatch_select_value(select_element, matched_value or matched_text, matched_text):
         sleep(0.2)
-        return get_selected_option_text(question, strict=True)
+        selected_text = get_selected_option_text(question, strict=True)
+        if select_answer_matches(selected_text, desired_text) or select_answer_matches(selected_text, matched_text):
+            return selected_text
+
+    return selected_text
+
+
+def force_input_option(question: WebElement, desired_text: str) -> str:
+    input_element = try_xp(question, ".//input[@type='email' or contains(@autocomplete, 'email') or @name='email' or @type='text']", False)
+    if not input_element:
+        return ""
+
+    try:
+        input_element.click()
+        input_element.send_keys(Keys.CONTROL + 'a')
+        input_element.send_keys(Keys.DELETE)
+        human_type(input_element, desired_text)
+    except Exception:
+        dispatch_input_value(input_element, desired_text)
+
+    sleep(0.2)
+    selected_text = (input_element.get_attribute("value") or "").strip()
+    if normalize_select_text(selected_text) == normalize_select_text(desired_text):
+        return selected_text
+
+    if dispatch_input_value(input_element, desired_text):
+        sleep(0.2)
+        selected_text = (input_element.get_attribute("value") or "").strip()
 
     return selected_text
 
 
 def enforce_email_dropdowns(modal: WebElement, questions_list: set) -> set:
-    for question in modal.find_elements(By.XPATH, ".//div[@data-test-form-element]"):
+    candidate_questions = modal.find_elements(
+        By.XPATH,
+        ".//div[@data-test-form-element] | .//div[.//select or .//input[@type='email' or contains(@autocomplete, 'email') or @name='email']] | .//fieldset[.//select]",
+    )
+    seen_controls = set()
+
+    for question in candidate_questions:
+        label_org = get_question_label_text(question)
+        if 'email' not in normalize_select_text(label_org):
+            continue
+
         select_element = try_xp(question, ".//select", False)
-        if not select_element:
+        if select_element:
+            control_key = f'select:{select_element.id}'
+            if control_key in seen_controls:
+                continue
+            seen_controls.add(control_key)
+
+            select_wrapper = Select(select_element)
+            prev_answer = select_wrapper.first_selected_option.text.strip()
+            options_text = [option.text for option in select_wrapper.options]
+            options = "".join([f' "{option}",' for option in options_text])
+
+            final_answer = force_select_option(question, email)
+            logged_answer = final_answer if final_answer else "[selection not verified]"
+            questions_list = {
+                item for item in questions_list
+                if not (len(item) >= 3 and item[2] == "select" and isinstance(item[0], str) and item[0].startswith(f'{label_org} ['))
+            }
+            questions_list.add((f'{label_org} [ {options} ]', logged_answer, "select", prev_answer))
+
+            if not final_answer:
+                print_lg(f'WARNING: Unable to verify email dropdown selection for question labelled "{label_org}"')
+            elif normalize_select_text(final_answer) != normalize_select_text(email):
+                print_lg(f'WARNING: Email dropdown still selected "{final_answer}" instead of "{email}" for question labelled "{label_org}"')
             continue
 
-        label_org = "Unknown"
-        try:
-            label = question.find_element(By.TAG_NAME, "label")
-            label_org = label.find_element(By.TAG_NAME, "span").text
-        except Exception:
-            pass
-
-        if 'email' not in label_org.lower():
+        input_element = try_xp(question, ".//input[@type='email' or contains(@autocomplete, 'email') or @name='email']", False)
+        if not input_element:
             continue
 
-        select_wrapper = Select(select_element)
-        prev_answer = select_wrapper.first_selected_option.text.strip()
-        options_text = [option.text for option in select_wrapper.options]
-        options = "".join([f' "{option}",' for option in options_text])
+        control_key = f'input:{input_element.id}'
+        if control_key in seen_controls:
+            continue
+        seen_controls.add(control_key)
 
-        final_answer = force_select_option(question, email)
+        prev_answer = (input_element.get_attribute("value") or "").strip()
+        final_answer = force_input_option(question, email)
         logged_answer = final_answer if final_answer else "[selection not verified]"
         questions_list = {
             item for item in questions_list
-            if not (len(item) >= 3 and item[2] == "select" and isinstance(item[0], str) and item[0].startswith(f'{label_org} ['))
+            if not (len(item) >= 3 and item[2] == "text" and isinstance(item[0], str) and item[0] == label_org.lower())
         }
-        questions_list.add((f'{label_org} [ {options} ]', logged_answer, "select", prev_answer))
+        questions_list.add((label_org.lower(), logged_answer, "text", prev_answer))
 
         if not final_answer:
-            print_lg(f'WARNING: Unable to verify email dropdown selection for question labelled "{label_org}"')
+            print_lg(f'WARNING: Unable to verify email input for question labelled "{label_org}"')
         elif normalize_select_text(final_answer) != normalize_select_text(email):
-            print_lg(f'WARNING: Email dropdown still selected "{final_answer}" instead of "{email}" for question labelled "{label_org}"')
+            print_lg(f'WARNING: Email input still contains "{final_answer}" instead of "{email}" for question labelled "{label_org}"')
 
     return questions_list
 
@@ -680,25 +902,26 @@ def get_resume_for_term(search_term: str) -> str:
 
 # Function to answer common questions for Easy Apply
 def answer_common_questions(label: str, answer: str) -> str:
-    experience_threshold = extract_experience_threshold(label)
-    if 'sponsorship' in label or 'visa' in label: answer = require_visa
-    elif any(phrase in label for phrase in ['living in', 'based in', 'reside in', 'residing in', 'located in', 'authorized to work in', 'allowed to work in', 'right to work in', 'permission to work in', 'eligible to work in', 'currently in', 'live in']):
+    normalized_label = normalize_select_text(label)
+    experience_threshold = extract_experience_threshold(normalized_label)
+    if 'sponsorship' in normalized_label or 'visa' in normalized_label: answer = require_visa
+    elif any(phrase in normalized_label for phrase in ['living in', 'based in', 'reside in', 'residing in', 'located in', 'authorized to work in', 'allowed to work in', 'right to work in', 'permission to work in', 'eligible to work in', 'currently in', 'live in']):
         # Return No only when label explicitly names a non-EU jurisdiction.
         # Generic labels like "job's location" default to Yes — Sharon applies to EU roles only.
-        non_eu = any(c in label for c in ['united states', ' usa', ' us ', 'canada', 'australia', 'india', 'china', 'brazil', 'japan', 'south korea', 'singapore', 'new zealand', 'united kingdom', ' uk '])
-        eu_match = any(term in label for term in [current_country.lower(), 'european union', 'europe', 'schengen', 'eea', ' eu ', ' eu?', ' eu.', 'eu/'])
+        non_eu = any(c in normalized_label for c in ['united states', ' usa', ' us ', 'canada', 'australia', 'india', 'china', 'brazil', 'japan', 'south korea', 'singapore', 'new zealand', 'united kingdom', ' uk '])
+        eu_match = any(term in normalized_label for term in [normalize_select_text(current_country), 'european union', 'europe', 'schengen', 'eea', ' eu ', ' eu?', ' eu.', 'eu/'])
         answer = 'No' if non_eu and not eu_match else 'Yes'
-    elif experience_threshold and any(term in label for term in ['experience', 'experiencia']):
+    elif experience_threshold and any(term in normalized_label for term in ['experience', 'experiencia']):
         threshold, is_strict = experience_threshold
         profile_experience = configured_experience_years()
         meets_threshold = profile_experience > threshold if is_strict else profile_experience >= threshold
         answer = 'Yes' if meets_threshold else 'No'
-    elif any(term in label for term in ['interested in', 'interesado', 'interesada']) and any(term in label for term in ['contract', 'contrato']):
+    elif any(term in normalized_label for term in ['interested in', 'interesado', 'interesada']) and any(term in normalized_label for term in ['contract', 'contrato']):
         answer = 'Yes'
-    elif any(phrase in label for phrase in ['prevent you from working', 'conditions or agreements prevent', 'conditions prevent you', 'agreement prevent']):
+    elif any(phrase in normalized_label for phrase in ['prevent you from working', 'conditions or agreements prevent', 'conditions prevent you', 'agreement prevent']):
         # "Would any employment conditions/agreements prevent you from working here?" → No
         answer = 'No'
-    elif 'english' in label and any(w in label for w in ['level', 'proficiency', 'fluent', 'speak', 'advanced', 'inglés', 'ingles']):
+    elif any(term in normalized_label for term in ENGLISH_LANGUAGE_MARKERS) and any(w in normalized_label for w in ['level', 'proficiency', 'fluency', 'fluent', 'speak', 'advanced', 'ingles']):
         answer = 'Yes'
     return answer
 
@@ -724,100 +947,69 @@ def answer_questions(modal: WebElement, questions_list: set, work_location: str,
             except: pass
             answer = 'Yes'
             label = label_org.lower()
+            label_norm = normalize_select_text(label_org)
             select = Select(select)
             selected_option = select.first_selected_option.text
             optionsText = []
             options = '"List of phone country codes"'
-            if label != "phone country code":
+            if label_norm != "phone country code":
                 optionsText = [option.text for option in select.options]
                 options = "".join([f' "{option}",' for option in optionsText])
             prev_answer = selected_option
             answer = prev_answer
-            force_binary_answer = should_force_binary_answer(label) and has_yes_no_options(optionsText)
-            if overwrite_previous_answers or is_select_placeholder(selected_option) or force_binary_answer or label == "phone country code" or 'email' in label or ('english' in label and 'level' in label):
-                if label == "phone country code" and not optionsText:
+            proficiency_answer = get_language_proficiency_answer(label_org)
+            force_binary_answer = should_force_binary_answer(label_norm) and has_yes_no_options(optionsText)
+            if overwrite_previous_answers or is_select_placeholder(selected_option) or force_binary_answer or label_norm == "phone country code" or 'email' in label_norm or proficiency_answer is not None:
+                if label_norm == "phone country code" and not optionsText:
                     optionsText = [option.text for option in select.options]  # needed for fallback fuzzy match
-                if 'email' in label and not optionsText:
+                if 'email' in label_norm and not optionsText:
                     optionsText = [option.text for option in select.options]  # needed for fallback fuzzy match
                 ##> ------ WINDY_WINDWARD Email:karthik.sarode23@gmail.com - Added fuzzy logic to answer location based questions ------
-                if 'email' in label:
+                if 'email' in label_norm:
                     answer = email
-                elif label == 'phone country code':
+                elif label_norm == 'phone country code':
                     answer = phone_country_code
-                elif 'phone' in label:
+                elif 'phone' in label_norm:
                     answer = prev_answer
-                elif 'gender' in label or 'sex' in label: 
+                elif 'gender' in label_norm or 'sex' in label_norm: 
                     answer = gender
-                elif 'disability' in label: 
+                elif 'disability' in label_norm: 
                     answer = disability_status
-                elif 'proficiency' in label or 'proficiência' in label or 'nivel' in label or 'nível' in label or ('english' in label and 'level' in label):
-                    if 'english' in label:
-                        answer = 'Native or Bilingual'
-                    elif 'french' in label or 'français' in label or 'francais' in label:
-                        answer = 'Professional'
-                    else:
-                        answer = 'None'
-                elif 'category' in label or 'function' in label or 'department' in label:
+                elif proficiency_answer is not None:
+                    answer = proficiency_answer
+                elif 'category' in label_norm or 'function' in label_norm or 'department' in label_norm:
                     answer = job_category
                 # Add location handling
-                elif any(loc_word in label for loc_word in ['location', 'city', 'state', 'country']):
-                    if 'country' in label:
+                elif any(loc_word in label_norm for loc_word in ['location', 'city', 'state', 'country']):
+                    if 'country' in label_norm:
                         answer = current_country
-                    elif 'state' in label:
+                    elif 'state' in label_norm:
                         answer = state
-                    elif 'city' in label:
+                    elif 'city' in label_norm:
                         answer = current_city if current_city else work_location
                     else:
                         answer = work_location
                 else: 
-                    answer = answer_common_questions(label,answer)
-                try: 
-                    select.select_by_visible_text(answer)
-                except NoSuchElementException as e:
-                    # Define similar phrases for common answers
-                    possible_answer_phrases = []
-                    if answer == 'Decline':
-                        possible_answer_phrases = ["Decline", "not wish", "don't wish", "Prefer not", "not want"]
-                    elif 'yes' in answer.lower():
-                        possible_answer_phrases = ["Yes", "Agree", "I do", "I have", "Si", "Sí", "Oui", "Ja", "Sim"]
-                    elif 'no' in answer.lower():
-                        possible_answer_phrases = ["No", "Disagree", "I don't", "I do not", "Non", "Nein", "Nao", "Não"]
+                    answer = answer_common_questions(label_norm,answer)
+                selected_answer = force_select_option(Question, answer)
+                if not select_answer_matches(selected_answer, answer):
+                    if 'email' in label_norm:
+                        print_lg(f'Failed to verify email option "{answer}" for question labelled "{label_org}".')
                     else:
-                        # Try partial matching for any answer
-                        possible_answer_phrases = [answer]
-                        # Add lowercase and uppercase variants
-                        possible_answer_phrases.append(answer.lower())
-                        possible_answer_phrases.append(answer.upper())
-                        # Try without special characters
-                        possible_answer_phrases.append(''.join(c for c in answer if c.isalnum()))
-                    ##<
-                    foundOption = False
-                    for phrase in possible_answer_phrases:
-                        normalized_phrase = normalize_select_text(phrase)
-                        for option in optionsText:
-                            normalized_option = normalize_select_text(option)
-                            # Check if phrase is in option or option is in phrase (bidirectional matching)
-                            if normalized_phrase in normalized_option or normalized_option in normalized_phrase:
-                                select.select_by_visible_text(option)
-                                answer = option
-                                foundOption = True
-                                break
-                    if not foundOption:
-                        #TODO: Use AI to answer the question need to be implemented logic to extract the options for the question
-                        print_lg(f'Failed to find an option with text "{answer}" for question labelled "{label_org}", answering randomly!')
+                        print_lg(f'Failed to verify select option "{answer}" for question labelled "{label_org}", answering randomly!')
                         rand_max = max(1, len(select.options) - 1)
                         select.select_by_index(randint(1, rand_max) if rand_max > 1 else 0)
-                        answer = select.first_selected_option.text
+                        selected_answer = get_selected_option_text(Question, select.first_selected_option.text)
                         randomly_answered_questions.add((f'{label_org} [ {options} ]',"select"))
-                if 'email' in label:
-                    answer = force_select_option(Question, email)
+                if 'email' in label_norm:
+                    answer = selected_answer
                     if not answer:
                         print_lg(f'WARNING: Unable to verify email dropdown selection for "{label_org}".')
                         answer = "[selection not verified]"
                     elif normalize_select_text(answer) != normalize_select_text(email):
                         print_lg(f'WARNING: Email select verification failed for "{label_org}". Current selection is "{answer}".')
                 else:
-                    answer = get_selected_option_text(Question, answer)
+                    answer = selected_answer or get_selected_option_text(Question, answer)
             else:
                 answer = get_selected_option_text(Question, answer)
             questions_list.add((f'{label_org} [ {options} ]', answer, "select", prev_answer))
