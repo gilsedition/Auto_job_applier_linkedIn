@@ -209,6 +209,14 @@ CRITICAL_QUESTION_MARKERS = {
     "degree",
     "qualification",
 }
+DAILY_LIMIT_MESSAGE_MARKERS = (
+    "limit daily submissions",
+    "save this job and apply tomorrow",
+    "daily application limit",
+    "exceeded the daily application limit",
+    "application limit",
+    "apply tomorrow",
+)
 DEMOGRAPHIC_CHECKBOX_MARKERS = {
     "gender",
     "sexual orientation",
@@ -258,6 +266,38 @@ def should_auto_check_checkbox(label_text: str, option_text: str) -> bool:
     if any(marker in normalized for marker in DEMOGRAPHIC_CHECKBOX_MARKERS):
         return False
     return any(marker in normalized for marker in CONSENT_CHECKBOX_MARKERS)
+
+
+def detect_daily_easy_apply_limit(context: str = "") -> bool:
+    global dailyEasyApplyLimitReached
+    if dailyEasyApplyLimitReached:
+        return True
+
+    alert_xpaths = [
+        "//div[contains(@class,'artdeco-inline-feedback') and (@role='alert' or contains(@class,'artdeco-inline-feedback--error'))]",
+        "//div[contains(@class,'artdeco-inline-feedback__message') and ancestor::div[contains(@class,'artdeco-inline-feedback')]]",
+    ]
+    try:
+        messages: list[str] = []
+        for xp in alert_xpaths:
+            for element in driver.find_elements(By.XPATH, xp):
+                try:
+                    text = (element.text or "").strip()
+                    if text:
+                        messages.append(text)
+                except Exception:
+                    continue
+
+        for message in messages:
+            normalized = normalize_select_text(message)
+            if any(marker in normalized for marker in DAILY_LIMIT_MESSAGE_MARKERS):
+                dailyEasyApplyLimitReached = True
+                prefix = f"[{context}] " if context else ""
+                print_lg(f"{prefix}LinkedIn Easy Apply daily limit detected. Banner: \"{message}\"")
+                return True
+    except Exception:
+        pass
+    return False
 
 
 def get_select_tokens(text: str) -> set[str]:
@@ -1851,9 +1891,7 @@ def external_apply(pagination_element: WebElement, job_id: str, job_link: str, r
     '''
     global tabs_count, dailyEasyApplyLimitReached
     if easy_apply_only:
-        try:
-            if "exceeded the daily application limit" in driver.find_element(By.CLASS_NAME, "artdeco-inline-feedback__message").text: dailyEasyApplyLimitReached = True
-        except: pass
+        detect_daily_easy_apply_limit("external-apply")
         print_lg("Easy apply failed I guess!")
         if pagination_element != None: return True, application_link, tabs_count
     try:
@@ -2050,6 +2088,9 @@ def apply_to_jobs(search_terms: list[str], per_term_cap: int = None, force_under
         current_count = 0
         try:
             while current_count < session_switch_cap:
+                if detect_daily_easy_apply_limit("apply-loop"):
+                    print_lg("\n###############  Daily application limit for Easy Apply is reached!  ###############\n")
+                    return pass_total
                 if has_security_challenge():
                     print_lg("Security challenge detected. Pausing automation to protect account health.")
                     sleep(randint(1800, 3600))
@@ -2068,6 +2109,9 @@ def apply_to_jobs(search_terms: list[str], per_term_cap: int = None, force_under
                     if keep_screen_awake: pyautogui.press('shiftright')
                     if current_count >= session_switch_cap: break
                     print_lg("\n-@-\n")
+                    if detect_daily_easy_apply_limit(f"job {job_id if 'job_id' in locals() else ''}"):
+                        print_lg("\n###############  Daily application limit for Easy Apply is reached!  ###############\n")
+                        return pass_total
 
                     job_id,title,company,work_location,work_style,skip = get_job_main_details(job, blacklisted_companies, rejected_jobs)
                     
@@ -2311,6 +2355,9 @@ def apply_to_jobs(search_terms: list[str], per_term_cap: int = None, force_under
 
                         except Exception as e:
                             print_lg("Failed to Easy apply!")
+                            if detect_daily_easy_apply_limit("easy-apply-exception"):
+                                print_lg("\n###############  Daily application limit for Easy Apply is reached!  ###############\n")
+                                return pass_total
                             stage_info = locals().get("easy_apply_stage", "unknown")
                             critical_error_log(f"Easy Apply failed at stage: {stage_info}",e)
                             failed_job(job_id, job_link, resume, date_listed, f"Problem in Easy Applying ({stage_info})", e, application_link, screenshot_name)
@@ -2322,7 +2369,7 @@ def apply_to_jobs(search_terms: list[str], per_term_cap: int = None, force_under
                         skip, application_link, tabs_count = external_apply(pagination_element, job_id, job_link, resume, date_listed, application_link, screenshot_name)
                         if dailyEasyApplyLimitReached:
                             print_lg("\n###############  Daily application limit for Easy Apply is reached!  ###############\n")
-                            return
+                            return pass_total
                         if skip: continue
 
                     submitted_jobs(job_id, title, company, work_location, work_style, description, experience_required, skills, hr_name, hr_link, resume, reposted, date_listed, date_applied, job_link, application_link, questions_list, connect_request, searchTerm)
