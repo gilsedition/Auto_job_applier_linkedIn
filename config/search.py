@@ -30,14 +30,26 @@ search_terms = [
     "Financial Operations Specialist",
     "Billing Operations Specialist",
     "Revenue Operations Analyst",
+    "Finance Assistant",
+    "Accounts Payable Clerk",
+    "Billing Coordinator",
+    "Finance Coordinator",
+    "Junior Financial Analyst",
+    "Finance Associate",
+    "Treasury Analyst",
+    "Purchase Ledger Clerk",
+    "Credit Controller",
+    "Analyste financier",
+    "Comptable",
+    "Analyste facturation",
 ]
 
 # Search location, this will be filled in "City, state, or zip code" search box. If left empty as "", tool will not fill it.
-search_location = "Europe"               # Some valid examples: "", "United States", "India", "Chicago, Illinois, United States", "90001, Los Angeles, California, United States", "Bengaluru, Karnataka, India", etc.
+search_location = "France"               # Some valid examples: "", "United States", "India", "Chicago, Illinois, United States", "90001, Los Angeles, California, United States", "Bengaluru, Karnataka, India", etc.
 
 # After how many number of applications in current search should the bot switch to next search? 
-switch_number = 3                  # Only numbers greater than 0... Don't put in quotes
-# NOTE: 3 per term × 10 terms = 30 max applications per run. LinkedIn Easy Apply limit is ~50/day; 30 leaves a safe buffer.
+switch_number = 5                  # Only numbers greater than 0... Don't put in quotes
+# NOTE: 5 per term gives the bot more room to use LinkedIn's daily Easy Apply budget on broader finance searches.
 
 # Do you want to randomize the search order for search_terms?
 randomize_search_order = True
@@ -66,13 +78,13 @@ salary = ""                        # "$40,000+", "$60,000+", "$80,000+", "$100,0
 
 easy_apply_only = True             # True or False, Note: True or False are case-sensitive
 
-experience_level = ["Associate", "Mid-Senior level"]              # (multiple select) "Internship", "Entry level", "Associate", "Mid-Senior level", "Director", "Executive"
+experience_level = ["Entry level", "Associate", "Mid-Senior level"]              # (multiple select) "Internship", "Entry level", "Associate", "Mid-Senior level", "Director", "Executive"
 job_type = []                      # (multiple select) "Full-time", "Part-time", "Contract", "Temporary", "Volunteer", "Internship", "Other"
 on_site = []                       # (multiple select) "On-site", "Remote", "Hybrid"
 
 companies = []                     # (dynamic multiple select) make sure the name you type in list exactly matches with the company name you're looking for, including capitals. 
                                    # Eg: "7-eleven", "Google","X, the moonshot factory","YouTube","CapitalG","Adometry (acquired by Google)","Meta","Apple","Byte Dance","Netflix", "Snowflake","Mineral.ai","Microsoft","JP Morgan","Barclays","Visa","American Express", "Snap Inc", "JPMorgan Chase & Co.", "Tata Consultancy Services", "Recruiting from Scratch", "Epic", and so on...
-location = []                      # (dynamic multiple select)
+location = ["France", "United Kingdom", "Ireland", "Netherlands", "Germany", "Belgium", "Luxembourg", "Spain", "Italy", "Portugal"]                      # (dynamic multiple select)
 industry = []                      # (dynamic multiple select)
 job_function = []                  # (dynamic multiple select)
 job_titles = []                    # (dynamic multiple select)
@@ -103,12 +115,12 @@ about_company_bad_words = ["Crossover"]       # (dynamic multiple search) or lea
 about_company_good_words = []      # (dynamic multiple search) or leave empty as []. Ex: ["Robert Half", "Dice"]
 
 # Skip jobs whose TITLE contains any of these words/phrases. Checked early (before loading description), so it saves time. Case Insensitive.
-title_bad_words = ["Consultant", "Team Lead", "IT Analyst", "Systems Analyst", "Data Engineer", "Software Engineer", "Software Developer", "DevOps", "Machine Learning", "Data Science", "Cybersecurity", "Network Engineer", "Cloud Engineer"]   # or leave empty as []. Ex: ["IT Analyst", "Software Engineer"]
+title_bad_words = ["Team Lead", "IT Analyst", "Systems Analyst", "Data Engineer", "Software Engineer", "Software Developer", "DevOps", "Machine Learning", "Data Science", "Cybersecurity", "Network Engineer", "Cloud Engineer"]   # or leave empty as []. Ex: ["IT Analyst", "Software Engineer"]
 
 # Minimum LinkedIn skills match percentage required to apply. Uses LinkedIn's own "X of Y skills match" indicator on the job detail panel.
 # Set to 0 or -1 to disable. Requires your skills to be filled in on your LinkedIn profile.
 # If the indicator is absent (LinkedIn didn't compute a match), the job is NOT skipped.
-min_skills_match_percentage = 20   # 0 to 100, or -1 to disable
+min_skills_match_percentage = 0    # 0 to 100, or -1 to disable
 
 # Avoid applying to these companies if they have these bad words in their 'Job Description' section...  (In development)
 bad_words = ["US Citizen", "USA Citizen", "No C2C", "No Corp2Corp", "Software Engineer", "Software Developer", "Machine Learning", "Data Science", "DevOps", "Cybersecurity", "Security Clearance", "Polygraph"]                     # (dynamic multiple search) or leave empty as []. Case Insensitive. Ex: ["word_1", "phrase 1", "word word", "polygraph", "US Citizenship", "Security Clearance"]

@@ -86,10 +86,6 @@ dailyEasyApplyLimitReached = False
 
 re_experience = re.compile(r'[(]?\s*(\d+)\s*[)]?\s*[-to]*\s*\d*[+]*\s*year[s]?', re.IGNORECASE)
 
-desired_salary_lakhs = str(round(desired_salary / 100000, 2))
-desired_salary_monthly = str(round(desired_salary/12, 2))
-desired_salary = str(desired_salary)
-
 current_ctc_lakhs = str(round(current_ctc / 100000, 2))
 current_ctc_monthly = str(round(current_ctc/12, 2))
 current_ctc = str(current_ctc)
@@ -102,6 +98,53 @@ aiClient = None
 ##> ------ Dheeraj Deshwal : dheeraj9811 Email:dheeraj20194@iiitd.ac.in/dheerajdeshwal9811@gmail.com - Feature ------
 about_company_for_ai = None # TODO extract about company for AI
 ##<
+
+
+def _normalize_location_hint(value: str | None) -> str:
+    return normalize_select_text(value or "")
+
+
+def _match_location_value(work_location: str, mapping: dict[str, str | int], default_value: str | int) -> str | int:
+    normalized_location = _normalize_location_hint(work_location)
+    for country, mapped_value in mapping.items():
+        if country in normalized_location:
+            return mapped_value
+    return default_value
+
+
+def location_requires_sponsorship(work_location: str) -> bool:
+    normalized_location = _normalize_location_hint(work_location)
+    if not normalized_location:
+        return require_visa_default == "Yes"
+    for country in no_sponsorship_countries:
+        if country in normalized_location:
+            return False
+    return True
+
+
+def get_visa_answer(work_location: str) -> str:
+    return "Yes" if location_requires_sponsorship(work_location) else "No"
+
+
+def get_work_authorization_answer(label: str, work_location: str) -> str:
+    normalized_label = normalize_select_text(label)
+    named_countries = set(no_sponsorship_countries) | set(salary_by_country.keys())
+    for country in sorted(named_countries, key=len, reverse=True):
+        if country in normalized_label:
+            return "No" if country not in no_sponsorship_countries else "Yes"
+
+    if any(term in normalized_label for term in ['european union', 'europe', 'schengen', 'eea', ' eu ', ' eu?', ' eu.', 'eu/']):
+        return "No" if location_requires_sponsorship(work_location) else "Yes"
+
+    return "No" if location_requires_sponsorship(work_location) else "Yes"
+
+
+def get_desired_salary_values(work_location: str) -> tuple[str, str, str]:
+    salary_value = int(_match_location_value(work_location, salary_by_country, desired_salary_default))
+    desired_salary_value = str(salary_value)
+    desired_salary_monthly = str(round(salary_value / 12, 2))
+    desired_salary_lakhs = str(round(salary_value / 100000, 2))
+    return desired_salary_value, desired_salary_monthly, desired_salary_lakhs
 
 SELECT_PLACEHOLDER_OPTIONS = {
     "select an option",
@@ -940,12 +983,14 @@ def set_search_location() -> None:
             print_lg("Failed to update search location, continuing with default location!", e)
 
 
-def apply_filters(force_under_10: bool = False) -> bool:
+def apply_filters(force_under_10: bool = False, date_posted_override: str | None = None) -> bool:
     '''
     Function to apply job search filters.
     force_under_10: when True, enables the "Under 10 applicants" filter regardless of config.
+    date_posted_override: when provided, applies this date filter for the current pass.
     '''
     set_search_location()
+    selected_date_posted = date_posted_override or date_posted
 
     try:
         recommended_wait = 1 if click_gap < 1 else 0
@@ -954,7 +999,7 @@ def apply_filters(force_under_10: bool = False) -> bool:
         buffer(recommended_wait)
 
         sort_clicked = bool(wait_span_click(driver, sort_by))
-        date_clicked = bool(wait_span_click(driver, date_posted))
+        date_clicked = bool(wait_span_click(driver, selected_date_posted))
         buffer(recommended_wait)
 
         multi_sel_noWait(driver, experience_level) 
@@ -993,7 +1038,7 @@ def apply_filters(force_under_10: bool = False) -> bool:
         if not sort_clicked:
             print_lg(f'Preflight failed: sort option "{sort_by}" was not applied.')
         if not date_clicked:
-            print_lg(f'Preflight failed: date filter "{date_posted}" was not applied.')
+            print_lg(f'Preflight failed: date filter "{selected_date_posted}" was not applied.')
 
         global pause_after_filters
         if pause_after_filters and "Turn off Pause after search" == pyautogui.confirm("These are your configured search results and filter. It is safe to change them while this dialog is open, any changes later could result in errors and skipping this search run.", "Please check your results", ["Turn off Pause after search", "Look's good, Continue"]):
@@ -1162,7 +1207,11 @@ def extract_years_of_experience(text: str) -> int:
     if len(matches) == 0: 
         print_lg("Couldn't find experience requirement in About the Job!")
         return 0
-    return max([int(match) for match in matches if int(match) <= 12])
+    experience_values = [int(match) for match in matches if int(match) <= 12]
+    if not experience_values:
+        # If only very high values were found (e.g., 15+ years), avoid crashing and keep the highest parsed value.
+        return max(int(match) for match in matches)
+    return max(experience_values)
 
 
 
@@ -1184,17 +1233,17 @@ def get_job_description(
     - `skipReason: str | None`
     - `skipMessage: str | None`
     '''
+    jobDescription = "Unknown"
+    experience_required: int | Literal['Unknown', 'Error in extraction'] = "Unknown"
+    skip = False
+    skipReason: str | None = None
+    skipMessage: str | None = None
     try:
         ##> ------ Dheeraj Deshwal : dheeraj9811 Email:dheeraj20194@iiitd.ac.in/dheerajdeshwal9811@gmail.com - Feature ------
-        jobDescription = "Unknown"
         ##<
-        experience_required = "Unknown"
         found_masters = 0
         jobDescription = find_by_class(driver, "jobs-box__html-content").text
         jobDescriptionLow = jobDescription.lower()
-        skip = False
-        skipReason = None
-        skipMessage = None
         desc_snippet = jobDescription[:300] + ("..." if len(jobDescription) > 300 else "")
         for word in bad_words:
             if word.lower() in jobDescriptionLow:
@@ -1221,8 +1270,7 @@ def get_job_description(
             experience_required = "Error in extraction"
             print_lg("Unable to extract years of experience required!")
             # print_lg(e)
-    finally:
-        return jobDescription, experience_required, skip, skipReason, skipMessage
+    return jobDescription, experience_required, skip, skipReason, skipMessage
         
 
 
@@ -1246,16 +1294,13 @@ def get_resume_for_term(search_term: str) -> str:
     return default_resume_path
 
 # Function to answer common questions for Easy Apply
-def answer_common_questions(label: str, answer: str) -> str:
+def answer_common_questions(label: str, answer: str, work_location: str) -> str:
     normalized_label = normalize_select_text(label)
     experience_threshold = extract_experience_threshold(normalized_label)
-    if 'sponsorship' in normalized_label or 'visa' in normalized_label: answer = require_visa
+    if 'sponsorship' in normalized_label or 'visa' in normalized_label:
+        answer = get_visa_answer(work_location)
     elif any(phrase in normalized_label for phrase in ['living in', 'based in', 'reside in', 'residing in', 'located in', 'authorized to work in', 'allowed to work in', 'right to work in', 'permission to work in', 'eligible to work in', 'currently in', 'live in']):
-        # Return No only when label explicitly names a non-EU jurisdiction.
-        # Generic labels like "job's location" default to Yes — Sharon applies to EU roles only.
-        non_eu = any(c in normalized_label for c in ['united states', ' usa', ' us ', 'canada', 'australia', 'india', 'china', 'brazil', 'japan', 'south korea', 'singapore', 'new zealand', 'united kingdom', ' uk '])
-        eu_match = any(term in normalized_label for term in [normalize_select_text(current_country), 'european union', 'europe', 'schengen', 'eea', ' eu ', ' eu?', ' eu.', 'eu/'])
-        answer = 'No' if non_eu and not eu_match else 'Yes'
+        answer = get_work_authorization_answer(normalized_label, work_location)
     elif experience_threshold and any(term in normalized_label for term in ['experience', 'experiencia']):
         threshold, is_strict = experience_threshold
         profile_experience = configured_experience_years()
@@ -1336,7 +1381,7 @@ def answer_questions(modal: WebElement, questions_list: list[QuestionEntry], wor
                     else:
                         answer = work_location
                 else: 
-                    answer = answer_common_questions(label_norm,answer)
+                    answer = answer_common_questions(label_norm, answer, work_location)
                 # If the answer is still a placeholder after all rule checks, proactively ask AI.
                 # Selecting the placeholder passes select_answer_matches but fails LinkedIn's form validation.
                 if is_select_placeholder(answer) and 'email' not in label_norm:
@@ -1436,7 +1481,7 @@ def answer_questions(modal: WebElement, questions_list: list[QuestionEntry], wor
                 elif 'veteran' in label or 'protected' in label: answer = veteran_status
                 elif 'disability' in label or 'handicapped' in label: 
                     answer = disability_status
-                else: answer = answer_common_questions(label,answer)
+                else: answer = answer_common_questions(label, answer, work_location)
                 foundOption = try_xp(radio, f".//label[normalize-space()='{answer}']", False)
                 if foundOption: 
                     actions.move_to_element(foundOption).click().perform()
@@ -1550,7 +1595,8 @@ def answer_questions(modal: WebElement, questions_list: list[QuestionEntry], wor
                     elif 'week' in label:
                         answer = notice_period_weeks
                     else: answer = notice_period
-                elif 'salary' in label or 'compensation' in label or 'ctc' in label or 'pay' in label: 
+                elif 'salary' in label or 'compensation' in label or 'ctc' in label or 'pay' in label:
+                    desired_salary_value, desired_salary_monthly, desired_salary_lakhs = get_desired_salary_values(work_location)
                     if 'current' in label or 'present' in label:
                         if 'month' in label:
                             answer = current_ctc_monthly
@@ -1564,7 +1610,7 @@ def answer_questions(modal: WebElement, questions_list: list[QuestionEntry], wor
                         elif 'lakh' in label:
                             answer = desired_salary_lakhs
                         else:
-                            answer = desired_salary
+                            answer = desired_salary_value
                 elif 'linkedin' in label: answer = linkedIn
                 elif 'website' in label or 'blog' in label or 'portfolio' in label or 'link' in label: answer = website
                 elif 'scale of 1-10' in label: answer = confidence_level
@@ -1573,7 +1619,7 @@ def answer_questions(modal: WebElement, questions_list: list[QuestionEntry], wor
                 elif 'state' in label or 'province' in label: answer = state
                 elif 'zip' in label or 'postal' in label or 'code' in label: answer = zipcode
                 elif 'country' in label: answer = current_country
-                else: answer = answer_common_questions(label,answer)
+                else: answer = answer_common_questions(label, answer, work_location)
                 ##> ------ Yang Li : MARKYangL - Feature ------
                 if answer == "":
                     if use_AI and aiClient:
@@ -2043,11 +2089,12 @@ def recover_browser_session(reason: Exception | str = "") -> bool:
 
 
 # Function to apply to jobs
-def apply_to_jobs(search_terms: list[str], per_term_cap: int = None, force_under_10: bool = False) -> int:
+def apply_to_jobs(search_terms: list[str], per_term_cap: int = None, force_under_10: bool = False, date_posted_override: str | None = None) -> int:
     '''
     Apply to jobs across all search terms.
     per_term_cap: max applications per search term this pass (overrides session_switch_cap if lower).
     force_under_10: override config to require "Under 10 applicants" filter for this pass.
+    date_posted_override: applies this date filter for this pass.
     Returns total applications submitted this pass.
     '''
     applied_jobs = get_applied_job_ids()
@@ -2061,7 +2108,8 @@ def apply_to_jobs(search_terms: list[str], per_term_cap: int = None, force_under
     if per_term_cap is not None:
         session_switch_cap = min(per_term_cap, session_switch_cap)
     pass_label = "Pass 1 [<10 applicants]" if force_under_10 else "Pass 2 [all jobs]"
-    print_lg(f"Session pacing: click_gap={session_click_gap}s, max applies/search={session_switch_cap} | {pass_label}")
+    selected_date_posted = date_posted_override or date_posted
+    print_lg(f"Session pacing: click_gap={session_click_gap}s, max applies/search={session_switch_cap} | {pass_label} | date_posted={selected_date_posted}")
     pass_total = 0
 
     if randomize_search_order:  shuffle(search_terms)
@@ -2080,7 +2128,7 @@ def apply_to_jobs(search_terms: list[str], per_term_cap: int = None, force_under
         print_lg("\n________________________________________________________________________________________________________________________\n")
         print_lg(f'\n>>>> Now searching for "{searchTerm}" <<<<\n\n')
 
-        filters_ok = apply_filters(force_under_10=force_under_10)
+        filters_ok = apply_filters(force_under_10=force_under_10, date_posted_override=selected_date_posted)
         if not filters_ok:
             print_lg(f'Skipping search term "{searchTerm}" because filter preflight verification failed.')
             continue
@@ -2094,7 +2142,7 @@ def apply_to_jobs(search_terms: list[str], per_term_cap: int = None, force_under
                 if has_security_challenge():
                     print_lg("Security challenge detected. Pausing automation to protect account health.")
                     sleep(randint(1800, 3600))
-                    return
+                    return pass_total
                 # Wait until job listings are loaded
                 wait.until(EC.presence_of_all_elements_located((By.XPATH, "//li[@data-occludable-job-id]")))
 
@@ -2450,13 +2498,16 @@ def run(total_runs: int) -> int:
     print_lg(f"Currently looking for jobs posted within '{date_posted}' and sorting them by '{sort_by}'")
 
     # Two-pass strategy: prioritise low-competition jobs first, then fill remaining budget.
-    total_daily_cap = switch_number * len(search_terms)   # e.g. 3 × 10 = 30
     pass1_per_term = max(1, switch_number // 2)           # first pass uses ~half the per-term budget on <10 applicant jobs
-    pass1_total = apply_to_jobs(search_terms, per_term_cap=pass1_per_term, force_under_10=True)
+    pass1_date_filter = "Past 24 hours"
+    pass2_date_filter = "Past week"
+
+    print_lg(f"Pass 1 date filter: {pass1_date_filter}; Pass 2 date filter: {pass2_date_filter}")
+    pass1_total = apply_to_jobs(search_terms, per_term_cap=pass1_per_term, force_under_10=True, date_posted_override=pass1_date_filter)
     remaining_per_term = max(0, switch_number - pass1_per_term)
     if remaining_per_term > 0 and not dailyEasyApplyLimitReached:
         print_lg(f"Pass 1 complete ({pass1_total} applied). Starting Pass 2 for remaining {remaining_per_term}/term slots...")
-        apply_to_jobs(search_terms, per_term_cap=remaining_per_term, force_under_10=False)
+        apply_to_jobs(search_terms, per_term_cap=remaining_per_term, force_under_10=False, date_posted_override=pass2_date_filter)
     print_lg("########################################################################################################################\n")
     if run_non_stop and not dailyEasyApplyLimitReached:
         print_lg("Sleeping for 10 min...")
@@ -2525,7 +2576,16 @@ def main() -> None:
             if cycle_date_posted:
                 date_options = ["Any time", "Past month", "Past week", "Past 24 hours"]
                 global date_posted
-                date_posted = date_options[date_options.index(date_posted)+1 if date_options.index(date_posted)+1 > len(date_options) else -1] if stop_date_cycle_at_24hr else date_options[0 if date_options.index(date_posted)+1 >= len(date_options) else date_options.index(date_posted)+1]
+                try:
+                    current_idx = date_options.index(date_posted)
+                except ValueError:
+                    current_idx = 0
+                if stop_date_cycle_at_24hr:
+                    # Advance one step each cycle and clamp at "Past 24 hours".
+                    date_posted = date_options[min(current_idx + 1, len(date_options) - 1)]
+                else:
+                    # Advance one step and wrap around to the beginning.
+                    date_posted = date_options[(current_idx + 1) % len(date_options)]
             if alternate_sortby:
                 global sort_by
                 sort_by = "Most recent" if sort_by == "Most relevant" else "Most relevant"
