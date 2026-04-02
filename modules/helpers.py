@@ -62,7 +62,7 @@ def get_default_temp_profile() -> str:
     # Thanks to https://github.com/vinodbavage31 for suggestion!
     home = pathlib.Path.home()
     if sys.platform.startswith('win'):
-        return "--user-data-dir=C:\\temp\\auto-job-apply-profile"
+        return r"C:\temp\auto-job-apply-profile"
     elif sys.platform.startswith('linux'):
         return str(home / ".auto-job-apply-profile")
     return str(home / "Library" / "Application Support" / "Google" / "Chrome" / "auto-job-apply-profile")
@@ -310,3 +310,23 @@ def truncate_for_csv(data, max_length: int = 131000, suffix: str = "...[TRUNCATE
         return truncated
     except Exception as e:
         return f"[ERROR CONVERTING DATA: {e}]"
+
+
+def fmt_date(value) -> str:
+    '''
+    Format a datetime-like value as a plain date string (YYYY-MM-DD) for Excel-compatible CSV output.
+    Returns the string representation of non-datetime values unchanged.
+    '''
+    if isinstance(value, datetime):
+        return value.strftime('%Y-%m-%d')
+    return str(value) if value is not None else ''
+
+
+def fmt_datetime(value) -> str:
+    '''
+    Format a datetime-like value as YYYY-MM-DD HH:MM:SS (no microseconds) for Excel-compatible CSV output.
+    Returns the string representation of non-datetime values unchanged.
+    '''
+    if isinstance(value, datetime):
+        return value.strftime('%Y-%m-%d %H:%M:%S')
+    return str(value) if value is not None else ''

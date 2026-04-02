@@ -22,6 +22,7 @@ import re
 import time
 import unicodedata
 import pyautogui
+from collections import deque
 
 # Set CSV field size limit to prevent field size errors
 csv.field_size_limit(1000000)  # Set to 1MB instead of default 131KB
@@ -54,7 +55,7 @@ if use_AI:
     if ai_provider == "gemini":
         from modules.ai.geminiConnections import gemini_create_client, gemini_extract_skills, gemini_answer_question
 
-from typing import Literal
+from typing import Any, Literal
 
 
 pyautogui.FAILSAFE = False
@@ -173,6 +174,70 @@ KNOWN_LANGUAGE_MARKERS = ENGLISH_LANGUAGE_MARKERS | FRENCH_LANGUAGE_MARKERS | {
     "arabic",
     "arabe",
 }
+EMAIL_LABEL_MARKERS = {
+    "email",
+    "e mail",
+    "e-mail",
+    "correo",
+    "courriel",
+    "mail",
+    "adresse",
+}
+CRITICAL_QUESTION_MARKERS = {
+    "authorized to work",
+    "allowed to work",
+    "right to work",
+    "permission to work",
+    "eligible to work",
+    "employment eligibility",
+    "legally authorized",
+    "legally entitled",
+    "residency",
+    "residence",
+    "citizenship",
+    "sponsorship",
+    "visa",
+    "work permit",
+    "clearance",
+    "criminal",
+    "conviction",
+    "background check",
+    "disability",
+    "veteran",
+    "protected veteran",
+    "equal opportunity",
+    "degree",
+    "qualification",
+}
+DEMOGRAPHIC_CHECKBOX_MARKERS = {
+    "gender",
+    "sexual orientation",
+    "orientation",
+    "ethnicity",
+    "race",
+    "veteran",
+    "disability",
+    "lgbt",
+}
+CONSENT_CHECKBOX_MARKERS = {
+    "confirm",
+    "certify",
+    "agree",
+    "acknowledge",
+    "authorization",
+    "authorize",
+    "consent",
+    "terms",
+    "privacy",
+    "attest",
+    "true and complete",
+}
+MODAL_ACTION_KEYWORDS = {
+    "next": ["next", "continue", "continuar", "suivant", "volgende", "weiter", "prossimo", "seguinte"],
+    "review": ["review", "revisar", "verificar", "verifier", "controleer", "uberprufen", "rivedi"],
+    "submit": ["submit", "send application", "apply", "postuler", "bewerben", "invia", "enviar", "solliciteren"],
+    "done": ["done", "close", "finish", "ok", "fechar", "terminer", "schliessen", "chiudi", "cerrar"],
+}
 
 
 def human_type(element: WebElement, text: str, min_delay: float = 0.03, max_delay: float = 0.12) -> None:
@@ -186,6 +251,13 @@ def normalize_select_text(text: str) -> str:
     normalized_text = unicodedata.normalize("NFKD", text or "")
     normalized_text = normalized_text.encode("ascii", "ignore").decode("ascii")
     return re.sub(r"\s+", " ", normalized_text).strip().casefold()
+
+
+def should_auto_check_checkbox(label_text: str, option_text: str) -> bool:
+    normalized = normalize_select_text(f"{label_text} {option_text}")
+    if any(marker in normalized for marker in DEMOGRAPHIC_CHECKBOX_MARKERS):
+        return False
+    return any(marker in normalized for marker in CONSENT_CHECKBOX_MARKERS)
 
 
 def get_select_tokens(text: str) -> set[str]:
@@ -334,6 +406,91 @@ def has_yes_no_options(option_texts: list[str]) -> bool:
     return "yes" in option_kinds and "no" in option_kinds
 
 
+QuestionEntry = tuple[str, Any, str, Any]
+
+
+def question_entry_key(question_entry: QuestionEntry) -> str:
+    return f"{question_entry[2]}|{normalize_select_text(str(question_entry[0]))}"
+
+
+def upsert_question(questions_list: list[QuestionEntry], entry: QuestionEntry) -> list[QuestionEntry]:
+    target_key = question_entry_key(entry)
+    for idx, existing in enumerate(questions_list):
+        if question_entry_key(existing) == target_key:
+            questions_list[idx] = entry
+            return questions_list
+    questions_list.append(entry)
+    return questions_list
+
+
+def remove_questions(questions_list: list[QuestionEntry], predicate) -> list[QuestionEntry]:
+    return [entry for entry in questions_list if not predicate(entry)]
+
+
+def is_critical_question(label_text: str) -> bool:
+    normalized_label = normalize_select_text(label_text)
+    return any(marker in normalized_label for marker in CRITICAL_QUESTION_MARKERS)
+
+
+def find_modal_action_button(modal: WebElement, action: str) -> WebElement | None:
+    keywords = MODAL_ACTION_KEYWORDS.get(action, [])
+    if not keywords:
+        return None
+
+    buttons = modal.find_elements(By.XPATH, ".//button[not(@disabled)]")
+    for button in buttons:
+        try:
+            button_text = normalize_select_text((button.text or "") + " " + (button.get_attribute("aria-label") or ""))
+            if any(keyword in button_text for keyword in keywords):
+                return button
+        except Exception:
+            continue
+    return None
+
+
+def click_modal_action(modal: WebElement, action: str, retries: int = 2) -> bool:
+    for _ in range(max(1, retries)):
+        try:
+            button = find_modal_action_button(modal, action)
+            if not button:
+                return False
+            scroll_to_view(driver, button, top=True)
+            button.click()
+            return True
+        except ElementClickInterceptedException:
+            sleep(0.4)
+            try:
+                modal = find_by_class(driver, "jobs-easy-apply-modal")
+            except Exception:
+                pass
+        except Exception:
+            sleep(0.3)
+    return False
+
+
+def is_easy_apply_modal_open() -> bool:
+    try:
+        overlays = driver.find_elements(By.XPATH, "//div[@data-test-modal-id='easy-apply-modal' and @aria-hidden='false']")
+        return len(overlays) > 0
+    except Exception:
+        return False
+
+
+def close_easy_apply_modal_if_open() -> bool:
+    if not is_easy_apply_modal_open():
+        return False
+    try:
+        actions.send_keys(Keys.ESCAPE).perform()
+        sleep(0.4)
+        discard_button = try_xp(driver, "//button[.//span[normalize-space()='Discard'] or normalize-space()='Discard']", False)
+        if discard_button:
+            discard_button.click()
+            sleep(0.4)
+        return not is_easy_apply_modal_open()
+    except Exception:
+        return False
+
+
 def get_selected_option_text(question: WebElement, fallback: str = "", strict: bool = False) -> str:
     try:
         select_element = try_xp(question, ".//select", False)
@@ -365,6 +522,51 @@ def get_question_label_text(question: WebElement) -> str:
             if text:
                 return text
     return "Unknown"
+
+
+def element_identifier(element: WebElement) -> str:
+    attrs = [
+        element.get_attribute("id") or "",
+        element.get_attribute("name") or "",
+        element.get_attribute("data-test-id") or "",
+        element.get_attribute("aria-label") or "",
+        element.get_attribute("autocomplete") or "",
+    ]
+    for attr in attrs:
+        if attr and attr.strip():
+            return attr.strip()
+    return str(element.id)
+
+
+def is_email_question_label(label_text: str) -> bool:
+    normalized_label = normalize_select_text(label_text)
+    if not normalized_label:
+        return False
+    return any(marker in normalized_label for marker in EMAIL_LABEL_MARKERS)
+
+
+def looks_like_email_text(text: str) -> bool:
+    normalized_text = normalize_select_text(text)
+    raw_text = (text or "").strip()
+    if "@" in raw_text:
+        return True
+    return any(marker in normalized_text for marker in EMAIL_LABEL_MARKERS)
+
+
+def control_looks_email_related(element: WebElement) -> bool:
+    try:
+        attrs = [
+            element.get_attribute("type") or "",
+            element.get_attribute("name") or "",
+            element.get_attribute("id") or "",
+            element.get_attribute("aria-label") or "",
+            element.get_attribute("autocomplete") or "",
+            element.get_attribute("placeholder") or "",
+            element.get_attribute("value") or "",
+        ]
+        return any(looks_like_email_text(attr) for attr in attrs)
+    except Exception:
+        return False
 
 
 def dispatch_select_value(select_element: WebElement, option_value: str, option_text: str) -> bool:
@@ -478,21 +680,61 @@ def force_input_option(question: WebElement, desired_text: str) -> str:
     return selected_text
 
 
-def enforce_email_dropdowns(modal: WebElement, questions_list: set) -> set:
+def enforce_email_dropdowns(modal: WebElement, questions_list: list[QuestionEntry]) -> list[QuestionEntry]:
     candidate_questions = modal.find_elements(
         By.XPATH,
         ".//div[@data-test-form-element] | .//div[.//select or .//input[@type='email' or contains(@autocomplete, 'email') or @name='email']] | .//fieldset[.//select]",
     )
+    candidate_questions.extend(
+        modal.find_elements(
+            By.XPATH,
+            ".//select | .//input[@type='email' or contains(@autocomplete, 'email') or @name='email']",
+        )
+    )
     seen_controls = set()
+    seen_questions = set()
 
     for question in candidate_questions:
-        label_org = get_question_label_text(question)
-        if 'email' not in normalize_select_text(label_org):
+        question_scope = question
+        try:
+            tag_name = (question.tag_name or "").lower()
+        except Exception:
+            tag_name = ""
+
+        if tag_name in {"select", "input"}:
+            parent_scope = try_xp(question, "./ancestor::*[self::div or self::fieldset][1]", False)
+            if parent_scope:
+                question_scope = parent_scope
+
+        question_key = element_identifier(question_scope)
+        if question_key in seen_questions:
+            continue
+        seen_questions.add(question_key)
+
+        label_org = get_question_label_text(question_scope)
+
+        input_element = question if tag_name == "input" else try_xp(question_scope, ".//input[@type='email' or contains(@autocomplete, 'email') or @name='email']", False)
+        select_element = question if tag_name == "select" else try_xp(question_scope, ".//select", False)
+        label_indicates_email = is_email_question_label(label_org)
+        input_indicates_email = bool(input_element and control_looks_email_related(input_element))
+
+        if not label_indicates_email and not input_indicates_email and not input_element and not select_element:
             continue
 
-        select_element = try_xp(question, ".//select", False)
         if select_element:
-            control_key = f'select:{select_element.id}'
+            options_text = []
+            try:
+                options_text = [option.text for option in Select(select_element).options]
+            except Exception:
+                options_text = []
+
+            has_email_option = any(normalize_select_text(option_text) == normalize_select_text(email) for option_text in options_text)
+            option_looks_email = any(looks_like_email_text(option_text) for option_text in options_text)
+            select_indicates_email = control_looks_email_related(select_element)
+            if not has_email_option and not option_looks_email and not label_indicates_email and not select_indicates_email:
+                continue
+
+            control_key = f'select:{element_identifier(select_element)}'
             if control_key in seen_controls:
                 continue
             seen_controls.add(control_key)
@@ -502,13 +744,13 @@ def enforce_email_dropdowns(modal: WebElement, questions_list: set) -> set:
             options_text = [option.text for option in select_wrapper.options]
             options = "".join([f' "{option}",' for option in options_text])
 
-            final_answer = force_select_option(question, email)
+            final_answer = force_select_option(question_scope, email)
             logged_answer = final_answer if final_answer else "[selection not verified]"
-            questions_list = {
-                item for item in questions_list
-                if not (len(item) >= 3 and item[2] == "select" and isinstance(item[0], str) and item[0].startswith(f'{label_org} ['))
-            }
-            questions_list.add((f'{label_org} [ {options} ]', logged_answer, "select", prev_answer))
+            questions_list = remove_questions(
+                questions_list,
+                lambda item: len(item) >= 3 and item[2] == "select" and isinstance(item[0], str) and item[0].startswith(f'{label_org} ['),
+            )
+            upsert_question(questions_list, (f'{label_org} [ {options} ]', logged_answer, "select", prev_answer))
 
             if not final_answer:
                 print_lg(f'WARNING: Unable to verify email dropdown selection for question labelled "{label_org}"')
@@ -516,23 +758,22 @@ def enforce_email_dropdowns(modal: WebElement, questions_list: set) -> set:
                 print_lg(f'WARNING: Email dropdown still selected "{final_answer}" instead of "{email}" for question labelled "{label_org}"')
             continue
 
-        input_element = try_xp(question, ".//input[@type='email' or contains(@autocomplete, 'email') or @name='email']", False)
         if not input_element:
             continue
 
-        control_key = f'input:{input_element.id}'
+        control_key = f'input:{element_identifier(input_element)}'
         if control_key in seen_controls:
             continue
         seen_controls.add(control_key)
 
         prev_answer = (input_element.get_attribute("value") or "").strip()
-        final_answer = force_input_option(question, email)
+        final_answer = force_input_option(question_scope, email)
         logged_answer = final_answer if final_answer else "[selection not verified]"
-        questions_list = {
-            item for item in questions_list
-            if not (len(item) >= 3 and item[2] == "text" and isinstance(item[0], str) and item[0] == label_org.lower())
-        }
-        questions_list.add((label_org.lower(), logged_answer, "text", prev_answer))
+        questions_list = remove_questions(
+            questions_list,
+            lambda item: len(item) >= 3 and item[2] == "text" and isinstance(item[0], str) and item[0] == label_org.lower(),
+        )
+        upsert_question(questions_list, (label_org.lower(), logged_answer, "text", prev_answer))
 
         if not final_answer:
             print_lg(f'WARNING: Unable to verify email input for question labelled "{label_org}"')
@@ -659,7 +900,7 @@ def set_search_location() -> None:
             print_lg("Failed to update search location, continuing with default location!", e)
 
 
-def apply_filters(force_under_10: bool = False) -> None:
+def apply_filters(force_under_10: bool = False) -> bool:
     '''
     Function to apply job search filters.
     force_under_10: when True, enables the "Under 10 applicants" filter regardless of config.
@@ -672,8 +913,8 @@ def apply_filters(force_under_10: bool = False) -> None:
         wait.until(EC.presence_of_element_located((By.XPATH, '//button[normalize-space()="All filters"]'))).click()
         buffer(recommended_wait)
 
-        wait_span_click(driver, sort_by)
-        wait_span_click(driver, date_posted)
+        sort_clicked = bool(wait_span_click(driver, sort_by))
+        date_clicked = bool(wait_span_click(driver, date_posted))
         buffer(recommended_wait)
 
         multi_sel_noWait(driver, experience_level) 
@@ -684,7 +925,7 @@ def apply_filters(force_under_10: bool = False) -> None:
         multi_sel_noWait(driver, on_site)
         if job_type or on_site: buffer(recommended_wait)
 
-        if easy_apply_only: boolean_button_click(driver, actions, "Easy Apply")
+        set_boolean_filter_state("Easy Apply", bool(easy_apply_only))
         
         multi_sel_noWait(driver, location)
         multi_sel_noWait(driver, industry)
@@ -694,7 +935,8 @@ def apply_filters(force_under_10: bool = False) -> None:
         multi_sel_noWait(driver, job_titles)
         if job_function or job_titles: buffer(recommended_wait)
 
-        if under_10_applicants or force_under_10: boolean_button_click(driver, actions, "Under 10 applicants")
+        desired_under_10 = bool(under_10_applicants or force_under_10)
+        set_boolean_filter_state("Under 10 applicants", desired_under_10)
         if in_your_network: boolean_button_click(driver, actions, "In your network")
         if fair_chance_employer: boolean_button_click(driver, actions, "Fair Chance Employer")
 
@@ -708,14 +950,56 @@ def apply_filters(force_under_10: bool = False) -> None:
         show_results_button: WebElement = driver.find_element(By.XPATH, '//button[contains(translate(@aria-label, "ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz"), "apply current filters to show")]')
         show_results_button.click()
 
+        if not sort_clicked:
+            print_lg(f'Preflight failed: sort option "{sort_by}" was not applied.')
+        if not date_clicked:
+            print_lg(f'Preflight failed: date filter "{date_posted}" was not applied.')
+
         global pause_after_filters
         if pause_after_filters and "Turn off Pause after search" == pyautogui.confirm("These are your configured search results and filter. It is safe to change them while this dialog is open, any changes later could result in errors and skipping this search run.", "Please check your results", ["Turn off Pause after search", "Look's good, Continue"]):
             pause_after_filters = False
+
+        return sort_clicked and date_clicked
 
     except Exception as e:
         print_lg("Setting the preferences failed!")
         pyautogui.confirm(f"Faced error while applying filters. Please make sure correct filters are selected, click on show results and click on any button of this dialog. ERROR: {e}", "Filter Error", ["Doesn't look good, but Continue", "Look's good, Continue"])
         # print_lg(e)
+        return False
+
+
+def set_boolean_filter_state(filter_text: str, should_enable: bool) -> bool:
+    '''Ensure a boolean filter switch has the desired state.'''
+    try:
+        list_container = driver.find_element(By.XPATH, f'.//h3[normalize-space()="{filter_text}"]/ancestor::fieldset')
+        button = list_container.find_element(By.XPATH, './/input[@role="switch"]')
+        def _read_state(switch_input: WebElement) -> bool:
+            # LinkedIn toggles are inconsistent across DOM versions; read multiple indicators.
+            try:
+                if switch_input.is_selected():
+                    return True
+            except Exception:
+                pass
+            aria_checked = str(switch_input.get_attribute("aria-checked") or "").strip().lower()
+            if aria_checked in {"true", "false"}:
+                return aria_checked == "true"
+            return str(switch_input.get_attribute("checked") or "").strip().lower() in {"true", "checked"}
+
+        current_state = _read_state(button)
+        if current_state != should_enable:
+            scroll_to_view(driver, button)
+            actions.move_to_element(button).click().perform()
+            buffer(click_gap)
+            # Re-read after click; if still not matching, retry once with refreshed element.
+            list_container = driver.find_element(By.XPATH, f'.//h3[normalize-space()="{filter_text}"]/ancestor::fieldset')
+            button = list_container.find_element(By.XPATH, './/input[@role="switch"]')
+            if _read_state(button) != should_enable:
+                actions.move_to_element(button).click().perform()
+                buffer(click_gap)
+        return True
+    except Exception:
+        print_lg(f"Click Failed! Didn't find '{filter_text}'")
+        return False
 
 
 
@@ -948,7 +1232,7 @@ def answer_common_questions(label: str, answer: str) -> str:
 
 
 # Function to answer the questions for Easy Apply
-def answer_questions(modal: WebElement, questions_list: set, work_location: str, job_description: str | None = None ) -> set:
+def answer_questions(modal: WebElement, questions_list: list[QuestionEntry], work_location: str, job_description: str | None = None ) -> list[QuestionEntry]:
     # Get all questions from the page
      
     all_questions = modal.find_elements(By.XPATH, ".//div[@data-test-form-element]")
@@ -980,6 +1264,7 @@ def answer_questions(modal: WebElement, questions_list: set, work_location: str,
             answer = prev_answer
             proficiency_answer = get_language_proficiency_answer(label_org)
             force_binary_answer = should_force_binary_answer(label_norm) and has_yes_no_options(optionsText)
+            critical_select = is_critical_question(label_org)
             if overwrite_previous_answers or is_select_placeholder(selected_option) or force_binary_answer or label_norm == "phone country code" or 'email' in label_norm or proficiency_answer is not None:
                 if label_norm == "phone country code" and not optionsText:
                     optionsText = [option.text for option in select.options]  # needed for fallback fuzzy match
@@ -1012,16 +1297,61 @@ def answer_questions(modal: WebElement, questions_list: set, work_location: str,
                         answer = work_location
                 else: 
                     answer = answer_common_questions(label_norm,answer)
+                # If the answer is still a placeholder after all rule checks, proactively ask AI.
+                # Selecting the placeholder passes select_answer_matches but fails LinkedIn's form validation.
+                if is_select_placeholder(answer) and 'email' not in label_norm:
+                    if use_AI and aiClient:
+                        try:
+                            if ai_provider.lower() == "openai":
+                                ai_answer = ai_answer_question(aiClient, label_org, options=optionsText, question_type="single_select", job_description=job_description, user_information_all=user_information_all)
+                            elif ai_provider.lower() == "deepseek":
+                                ai_answer = deepseek_answer_question(aiClient, label_org, options=optionsText, question_type="single_select", job_description=job_description, about_company=None, user_information_all=user_information_all)
+                            elif ai_provider.lower() == "gemini":
+                                ai_answer = gemini_answer_question(aiClient, label_org, options=optionsText, question_type="single_select", job_description=job_description, about_company=None, user_information_all=user_information_all)
+                            else:
+                                ai_answer = None
+                            if ai_answer and isinstance(ai_answer, str) and len(ai_answer) > 0:
+                                answer = ai_answer
+                                print_lg(f'AI proactively answered unanswered select "{label_org}" with "{answer}"')
+                        except Exception as e:
+                            print_lg("AI failed to proactively answer select question!", e)
+                    # Final fallback: if still a placeholder, default Yes for binary questions
+                    if is_select_placeholder(answer) and has_yes_no_options(optionsText) and not critical_select:
+                        answer = 'Yes'
+                        print_lg(f'Defaulting to "Yes" for unanswered binary select "{label_org}"')
                 selected_answer = force_select_option(Question, answer)
                 if not select_answer_matches(selected_answer, answer):
                     if 'email' in label_norm:
                         print_lg(f'Failed to verify email option "{answer}" for question labelled "{label_org}".')
                     else:
-                        print_lg(f'Failed to verify select option "{answer}" for question labelled "{label_org}", answering randomly!')
-                        rand_max = max(1, len(select.options) - 1)
-                        select.select_by_index(randint(1, rand_max) if rand_max > 1 else 0)
-                        selected_answer = get_selected_option_text(Question, select.first_selected_option.text)
-                        randomly_answered_questions.add((f'{label_org} [ {options} ]',"select"))
+                        ai_select_answered = False
+                        if use_AI and aiClient:
+                            try:
+                                if ai_provider.lower() == "openai":
+                                    ai_answer = ai_answer_question(aiClient, label_org, options=optionsText, question_type="single_select", job_description=job_description, user_information_all=user_information_all)
+                                elif ai_provider.lower() == "deepseek":
+                                    ai_answer = deepseek_answer_question(aiClient, label_org, options=optionsText, question_type="single_select", job_description=job_description, about_company=None, user_information_all=user_information_all)
+                                elif ai_provider.lower() == "gemini":
+                                    ai_answer = gemini_answer_question(aiClient, label_org, options=optionsText, question_type="single_select", job_description=job_description, about_company=None, user_information_all=user_information_all)
+                                else:
+                                    ai_answer = None
+                                if ai_answer and isinstance(ai_answer, str) and len(ai_answer) > 0:
+                                    ai_selected = force_select_option(Question, ai_answer)
+                                    if select_answer_matches(ai_selected, ai_answer):
+                                        selected_answer = ai_selected
+                                        answer = ai_selected
+                                        ai_select_answered = True
+                                        print_lg(f'AI answered select question "{label_org}" with "{ai_selected}"')
+                            except Exception as e:
+                                print_lg("AI failed to answer select question!", e)
+                        if not ai_select_answered:
+                            if critical_select:
+                                raise Exception(f'Critical select unresolved: {label_org}')
+                            print_lg(f'Failed to verify select option "{answer}" for question labelled "{label_org}", answering randomly!')
+                            rand_max = max(1, len(select.options) - 1)
+                            select.select_by_index(randint(1, rand_max) if rand_max > 1 else 0)
+                            selected_answer = get_selected_option_text(Question, select.first_selected_option.text)
+                            randomly_answered_questions.add((f'{label_org} [ {options} ]',"select"))
                 if 'email' in label_norm:
                     answer = selected_answer
                     if not answer:
@@ -1033,7 +1363,7 @@ def answer_questions(modal: WebElement, questions_list: set, work_location: str,
                     answer = selected_answer or get_selected_option_text(Question, answer)
             else:
                 answer = get_selected_option_text(Question, answer)
-            questions_list.add((f'{label_org} [ {options} ]', answer, "select", prev_answer))
+            upsert_question(questions_list, (f'{label_org} [ {options} ]', answer, "select", prev_answer))
             continue
         
         # Check if it's a radio Question
@@ -1060,6 +1390,7 @@ def answer_questions(modal: WebElement, questions_list: set, work_location: str,
 
             is_work_auth = any(phrase in label for phrase in ['authorized to work', 'allowed to work', 'right to work', 'permission to work', 'eligible to work', 'legally authorized', 'legally entitled', 'living in', 'based in', 'reside in', 'residing in'])
             force_binary_answer = should_force_binary_answer(label) and has_yes_no_options(options_labels)
+            critical_radio = is_critical_question(label_org)
             if overwrite_previous_answers or prev_answer is None or is_work_auth or force_binary_answer:
                 if 'citizenship' in label or 'employment eligibility' in label: answer = us_citizenship
                 elif 'veteran' in label or 'protected' in label: answer = veteran_status
@@ -1070,19 +1401,26 @@ def answer_questions(modal: WebElement, questions_list: set, work_location: str,
                 if foundOption: 
                     actions.move_to_element(foundOption).click().perform()
                 else:    
-                    possible_answer_phrases = ["Decline", "not wish", "don't wish", "Prefer not", "not want"] if answer == 'Decline' else [answer]
-                    if answer.lower() == 'yes':
+                    answer_intent = classify_select_option(answer) or normalize_select_text(answer)
+                    possible_answer_phrases = ["Decline", "not wish", "don't wish", "Prefer not", "not want"] if answer_intent == 'decline' else [answer]
+                    if answer_intent == 'yes':
                         possible_answer_phrases += ["Sí", "Si", "Oui", "Ja", "Yes"]
-                    elif answer.lower() == 'no':
+                    elif answer_intent == 'no':
                         possible_answer_phrases += ["No", "Non", "Nein"]
-                    ele = options[0]
-                    answer = options_labels[0]
+                    ele = None
+                    if answer_intent in {'yes', 'no', 'decline'}:
+                        for i, option_label in enumerate(options_labels):
+                            if classify_select_option(option_label) == answer_intent:
+                                foundOption = options[i]
+                                ele = foundOption
+                                answer = f'Decline ({option_label})' if answer_intent == 'decline' else option_label
+                                break
                     for phrase in possible_answer_phrases:
                         for i, option_label in enumerate(options_labels):
                             if phrase in option_label:
                                 foundOption = options[i]
                                 ele = foundOption
-                                answer = f'Decline ({option_label})' if len(possible_answer_phrases) > 1 else option_label
+                                answer = f'Decline ({option_label})' if answer_intent == 'decline' else option_label
                                 break
                         if foundOption: break
                     # if answer == 'Decline':
@@ -1093,10 +1431,44 @@ def answer_questions(modal: WebElement, questions_list: set, work_location: str,
                     #             answer = f'Decline ({phrase})'
                     #             ele = foundOption
                     #             break
-                    actions.move_to_element(ele).click().perform()
-                    if not foundOption: randomly_answered_questions.add((f'{label_org} ]',"radio"))
+                    if foundOption and ele:
+                        actions.move_to_element(ele).click().perform()
+                    if not foundOption:
+                        ai_radio_answered = False
+                        if use_AI and aiClient:
+                            try:
+                                if ai_provider.lower() == "openai":
+                                    ai_answer = ai_answer_question(aiClient, label_org, options=options_labels, question_type="single_select", job_description=job_description, user_information_all=user_information_all)
+                                elif ai_provider.lower() == "deepseek":
+                                    ai_answer = deepseek_answer_question(aiClient, label_org, options=options_labels, question_type="single_select", job_description=job_description, about_company=None, user_information_all=user_information_all)
+                                elif ai_provider.lower() == "gemini":
+                                    ai_answer = gemini_answer_question(aiClient, label_org, options=options_labels, question_type="single_select", job_description=job_description, about_company=None, user_information_all=user_information_all)
+                                else:
+                                    ai_answer = None
+                                if ai_answer and isinstance(ai_answer, str):
+                                    ai_option = try_xp(radio, f".//label[normalize-space()='{ai_answer}']", False)
+                                    if not ai_option:
+                                        for i, opt_label in enumerate(options_labels):
+                                            if ai_answer.lower() in opt_label.lower():
+                                                ai_option = try_xp(radio, f'.//label[@for="{options[i].get_attribute("id")}"]', False)
+                                                ai_answer = opt_label
+                                                break
+                                    if ai_option:
+                                        actions.move_to_element(ai_option).click().perform()
+                                        answer = ai_answer
+                                        ai_radio_answered = True
+                                        print_lg(f'AI answered radio question "{label_org}" with "{ai_answer}"')
+                            except Exception as e:
+                                print_lg("AI failed to answer radio question!", e)
+                        if not ai_radio_answered:
+                            if critical_radio:
+                                raise Exception(f'Critical radio unresolved: {label_org}')
+                            ele = options[0]
+                            answer = options_labels[0]
+                            actions.move_to_element(ele).click().perform()
+                            randomly_answered_questions.add((f'{label_org} ]',"radio"))
             else: answer = prev_answer
-            questions_list.add((label_org+" ]", answer, "radio", prev_answer))
+            upsert_question(questions_list, (label_org+" ]", answer, "radio", prev_answer))
             continue
         
         # Check if it's a text question
@@ -1113,6 +1485,8 @@ def answer_questions(modal: WebElement, questions_list: set, work_location: str,
             prev_answer = text.get_attribute("value")
             if not prev_answer or overwrite_previous_answers or 'phone' in label or 'mobile' in label or 'email' in label or 'experience' in label or 'years' in label:
                 if 'birth' in label: answer = birth_year
+                elif ('experience' in label or 'years' in label) and ('excel' in label or 'spreadsheet' in label):
+                    answer = globals().get("excel_years_of_experience", years_of_experience)
                 elif 'experience' in label or 'years' in label: answer = years_of_experience
                 elif 'phone' in label or 'mobile' in label: answer = phone_number
                 elif 'email' in label: answer = email
@@ -1120,6 +1494,8 @@ def answer_questions(modal: WebElement, questions_list: set, work_location: str,
                 elif 'city' in label or 'location' in label or 'address' in label:
                     answer = current_city if current_city else work_location
                     do_actions = True
+                elif 'how did you hear' in label or 'heard about this job' in label or 'heard about this role' in label:
+                    answer = globals().get("how_heard_about_job", "LinkedIn Jobs")
                 elif 'signature' in label: answer = full_name # 'signature' in label or 'legal name' in label or 'your name' in label or 'full name' in label: answer = full_name     # What if question is 'name of the city or university you attend, name of referral etc?'
                 elif 'name' in label:
                     if 'full' in label: answer = full_name
@@ -1162,6 +1538,7 @@ def answer_questions(modal: WebElement, questions_list: set, work_location: str,
                 if answer == "":
                     if use_AI and aiClient:
                         try:
+                            print_lg(f'No deterministic answer for "{label_org}". Asking AI...')
                             if ai_provider.lower() == "openai":
                                 answer = ai_answer_question(aiClient, label_org, question_type="text", job_description=job_description, user_information_all=user_information_all)
                             elif ai_provider.lower() == "deepseek":
@@ -1188,6 +1565,20 @@ def answer_questions(modal: WebElement, questions_list: set, work_location: str,
                 text.send_keys(Keys.CONTROL + 'a')
                 text.send_keys(Keys.DELETE)
                 answer = str(answer)
+                # For number fields, extract only the numeric value (AI may return a full sentence)
+                if text.get_attribute("type") == "number":
+                    nums = re.findall(r'\d[\d,.]*', re.sub(r'[€$£¥]', '', answer))
+                    candidates = []
+                    for n in nums:
+                        try: candidates.append(float(n.replace(',', '')))
+                        except: pass
+                    # Prefer values > 100 (salaries/quantities, not years like 2024 unless nothing better)
+                    salary_candidates = [c for c in candidates if c > 100]
+                    pick = max(salary_candidates) if salary_candidates else (max(candidates) if candidates else None)
+                    if pick is not None:
+                        extracted = str(int(pick)) if pick == int(pick) else str(pick)
+                        print_lg(f'Extracted number "{extracted}" from answer for number field "{label_org}"')
+                        answer = extracted
                 # Respect the field's maxlength attribute to avoid validation errors
                 max_length = text.get_attribute("maxlength")
                 if max_length and max_length.isdigit():
@@ -1197,7 +1588,7 @@ def answer_questions(modal: WebElement, questions_list: set, work_location: str,
                     sleep(2)
                     actions.send_keys(Keys.ARROW_DOWN)
                     actions.send_keys(Keys.ENTER).perform()
-            questions_list.add((label, text.get_attribute("value"), "text", prev_answer))
+            upsert_question(questions_list, (label, text.get_attribute("value"), "text", prev_answer))
             continue
 
         # Check if it's a textarea question
@@ -1268,7 +1659,7 @@ def answer_questions(modal: WebElement, questions_list: set, work_location: str,
                     sleep(2)
                     actions.send_keys(Keys.ARROW_DOWN)
                     actions.send_keys(Keys.ENTER).perform()
-            questions_list.add((label, text_area.get_attribute("value"), "textarea", prev_answer))
+            upsert_question(questions_list, (label, text_area.get_attribute("value"), "textarea", prev_answer))
             ##<
             continue
 
@@ -1283,13 +1674,37 @@ def answer_questions(modal: WebElement, questions_list: set, work_location: str,
             prev_answer = checkbox.is_selected()
             checked = prev_answer
             if not prev_answer:
-                try:
-                    actions.move_to_element(checkbox).click().perform()
-                    checked = True
-                except Exception as e: 
-                    print_lg("Checkbox click failed!", e)
-                    pass
-            questions_list.add((f'{label} ([X] {answer})', checked, "checkbox", prev_answer))
+                if should_auto_check_checkbox(label_org, answer):
+                    try:
+                        actions.move_to_element(checkbox).click().perform()
+                        checked = True
+                    except Exception as e: 
+                        print_lg("Checkbox click failed!", e)
+                        pass
+                else:
+                    ai_checked = False
+                    if use_AI and aiClient and not any(marker in normalize_select_text(f"{label_org} {answer}") for marker in DEMOGRAPHIC_CHECKBOX_MARKERS):
+                        try:
+                            print_lg(f'Checkbox decision uncertain for "{label_org}". Asking AI...')
+                            ai_checkbox_answer = None
+                            option_hints = ["Yes (check)", "No (leave unchecked)"]
+                            if ai_provider.lower() == "openai":
+                                ai_checkbox_answer = ai_answer_question(aiClient, label_org, options=option_hints, question_type="single_select", job_description=job_description, user_information_all=user_information_all)
+                            elif ai_provider.lower() == "deepseek":
+                                ai_checkbox_answer = deepseek_answer_question(aiClient, label_org, options=option_hints, question_type="single_select", job_description=job_description, about_company=None, user_information_all=user_information_all)
+                            elif ai_provider.lower() == "gemini":
+                                ai_checkbox_answer = gemini_answer_question(aiClient, label_org, options=option_hints, question_type="single_select", job_description=job_description, about_company=None, user_information_all=user_information_all)
+                            intent = classify_select_option(ai_checkbox_answer or "")
+                            if intent == "yes":
+                                actions.move_to_element(checkbox).click().perform()
+                                checked = True
+                                ai_checked = True
+                                print_lg(f'AI selected checkbox for "{label_org}"')
+                        except Exception as e:
+                            print_lg("AI checkbox decision failed!", e)
+                    if not ai_checked:
+                        print_lg(f'Leaving checkbox unchecked for manual or user-specific choice: "{label_org}"')
+            upsert_question(questions_list, (f'{label} ([X] {answer})', checked, "checkbox", prev_answer))
             continue
 
 
@@ -1304,6 +1719,130 @@ def answer_questions(modal: WebElement, questions_list: set, work_location: str,
     return questions_list
 
 
+def rectify_field_errors(modal: WebElement, questions_list: list[QuestionEntry], job_description: str | None = None) -> int:
+    '''
+    After a failed Next click, reads LinkedIn inline validation error messages and uses AI to re-answer
+    the specific fields that failed. Returns the number of fields that had errors.
+    '''
+    try:
+        error_elements = modal.find_elements(
+            By.XPATH,
+            ".//div[@data-test-form-element][.//*[contains(@class,'artdeco-inline-feedback--error')]]"
+        )
+    except Exception:
+        return 0
+    if not error_elements:
+        return 0
+
+    print_lg(f"Found {len(error_elements)} field(s) with validation errors, attempting to rectify...")
+
+    for elem in error_elements:
+        try:
+            label_org = get_question_label_text(elem)
+            error_msg = ""
+            try:
+                error_span = elem.find_element(By.XPATH, ".//*[contains(@class,'artdeco-inline-feedback--error')]")
+                error_msg = error_span.text.strip()
+            except Exception:
+                pass
+            if not error_msg:
+                error_msg = "Invalid answer — please provide a valid value."
+            print_lg(f'Validation error on "{label_org}": "{error_msg}"')
+            question_with_error = f"{label_org}\n[Form validation error: {error_msg}]"
+
+            # --- Select field ---
+            select_el = try_xp(elem, ".//select", False)
+            if select_el:
+                optionsText = []
+                try:
+                    optionsText = [o.text for o in Select(select_el).options if not is_select_placeholder(o.text)]
+                except Exception:
+                    pass
+                ai_answer = None
+                if use_AI and aiClient:
+                    try:
+                        if ai_provider.lower() == "openai":
+                            ai_answer = ai_answer_question(aiClient, question_with_error, options=optionsText, question_type="single_select", job_description=job_description, user_information_all=user_information_all)
+                        elif ai_provider.lower() == "deepseek":
+                            ai_answer = deepseek_answer_question(aiClient, question_with_error, options=optionsText, question_type="single_select", job_description=job_description, about_company=None, user_information_all=user_information_all)
+                        elif ai_provider.lower() == "gemini":
+                            ai_answer = gemini_answer_question(aiClient, question_with_error, options=optionsText, question_type="single_select", job_description=job_description, about_company=None, user_information_all=user_information_all)
+                    except Exception as e:
+                        print_lg(f'AI failed to rectify select "{label_org}"!', e)
+                if ai_answer and isinstance(ai_answer, str):
+                    force_select_option(elem, ai_answer)
+                    print_lg(f'Rectified select "{label_org}" with "{ai_answer}"')
+                elif optionsText:
+                    force_select_option(elem, optionsText[0])
+                    print_lg(f'Rectified select "{label_org}" with fallback first option "{optionsText[0]}"')
+                continue
+
+            # --- Text / number field ---
+            text_el = try_xp(elem, ".//input[@type='text' or @type='number']", False)
+            if text_el:
+                field_type = text_el.get_attribute("type") or "text"
+                ai_answer = None
+                if use_AI and aiClient:
+                    try:
+                        if ai_provider.lower() == "openai":
+                            ai_answer = ai_answer_question(aiClient, question_with_error, question_type="text", job_description=job_description, user_information_all=user_information_all)
+                        elif ai_provider.lower() == "deepseek":
+                            ai_answer = deepseek_answer_question(aiClient, question_with_error, options=None, question_type="text", job_description=job_description, about_company=None, user_information_all=user_information_all)
+                        elif ai_provider.lower() == "gemini":
+                            ai_answer = gemini_answer_question(aiClient, question_with_error, options=None, question_type="text", job_description=job_description, about_company=None, user_information_all=user_information_all)
+                    except Exception as e:
+                        print_lg(f'AI failed to rectify {field_type} field "{label_org}"!', e)
+                if ai_answer and isinstance(ai_answer, str) and ai_answer.strip():
+                    answer_str = str(ai_answer)
+                    if field_type == "number":
+                        nums = re.findall(r'\d[\d,.]*', re.sub(r'[€$£¥]', '', answer_str))
+                        candidates = []
+                        for n in nums:
+                            try: candidates.append(float(n.replace(',', '')))
+                            except: pass
+                        salary_candidates = [c for c in candidates if c > 100]
+                        pick = max(salary_candidates) if salary_candidates else (max(candidates) if candidates else None)
+                        if pick is not None:
+                            answer_str = str(int(pick)) if pick == int(pick) else str(pick)
+                    text_el.click()
+                    text_el.send_keys(Keys.CONTROL + 'a')
+                    text_el.send_keys(Keys.DELETE)
+                    max_length = text_el.get_attribute("maxlength")
+                    if max_length and max_length.isdigit():
+                        answer_str = answer_str[:int(max_length)]
+                    human_type(text_el, answer_str)
+                    print_lg(f'Rectified {field_type} field "{label_org}" with "{answer_str}"')
+                continue
+
+            # --- Textarea field ---
+            ta_el = try_xp(elem, ".//textarea", False)
+            if ta_el:
+                ai_answer = None
+                if use_AI and aiClient:
+                    try:
+                        if ai_provider.lower() == "openai":
+                            ai_answer = ai_answer_question(aiClient, question_with_error, question_type="textarea", job_description=job_description, user_information_all=user_information_all)
+                        elif ai_provider.lower() == "deepseek":
+                            ai_answer = deepseek_answer_question(aiClient, question_with_error, options=None, question_type="textarea", job_description=job_description, about_company=None, user_information_all=user_information_all)
+                        elif ai_provider.lower() == "gemini":
+                            ai_answer = gemini_answer_question(aiClient, question_with_error, options=None, question_type="textarea", job_description=job_description, about_company=None, user_information_all=user_information_all)
+                    except Exception as e:
+                        print_lg(f'AI failed to rectify textarea "{label_org}"!', e)
+                if ai_answer and isinstance(ai_answer, str) and ai_answer.strip():
+                    answer_str = str(ai_answer)
+                    max_length = ta_el.get_attribute("maxlength")
+                    if max_length and max_length.isdigit():
+                        answer_str = answer_str[:int(max_length)]
+                    ta_el.clear()
+                    for i in range(0, len(answer_str), 80):
+                        ta_el.send_keys(answer_str[i:i+80])
+                        sleep(uniform(0.05, 0.18))
+                    print_lg(f'Rectified textarea "{label_org}" with AI answer')
+
+        except Exception as e:
+            print_lg("Failed to rectify a field error!", e)
+
+    return len(error_elements)
 
 
 def external_apply(pagination_element: WebElement, job_id: str, job_link: str, resume: str, date_listed, application_link: str, screenshot_name: str) -> tuple[bool, str, int]:
@@ -1375,7 +1914,7 @@ def failed_job(job_id: str, job_link: str, resume: str, date_listed, error: str,
             fieldnames = ['Job ID', 'Job Link', 'Resume Tried', 'Date listed', 'Date Tried', 'Assumed Reason', 'Stack Trace', 'External Job link', 'Screenshot Name']
             writer = csv.DictWriter(file, fieldnames=fieldnames)
             if file.tell() == 0: writer.writeheader()
-            writer.writerow({'Job ID':truncate_for_csv(job_id), 'Job Link':truncate_for_csv(job_link), 'Resume Tried':truncate_for_csv(resume), 'Date listed':truncate_for_csv(date_listed), 'Date Tried':datetime.now(), 'Assumed Reason':truncate_for_csv(error), 'Stack Trace':truncate_for_csv(exception), 'External Job link':truncate_for_csv(application_link), 'Screenshot Name':truncate_for_csv(screenshot_name)})
+            writer.writerow({'Job ID':truncate_for_csv(job_id), 'Job Link':truncate_for_csv(job_link), 'Resume Tried':truncate_for_csv(resume), 'Date listed':fmt_date(date_listed), 'Date Tried':fmt_datetime(datetime.now()), 'Assumed Reason':truncate_for_csv(error), 'Stack Trace':truncate_for_csv(exception), 'External Job link':truncate_for_csv(application_link), 'Screenshot Name':truncate_for_csv(screenshot_name)})
             file.close()
     except Exception as e:
         print_lg("Failed to update failed jobs list!", e)
@@ -1400,7 +1939,7 @@ def screenshot(driver: WebDriver, job_id: str, failedAt: str) -> str:
 def submitted_jobs(job_id: str, title: str, company: str, work_location: str, work_style: str, description: str, experience_required: int | Literal['Unknown', 'Error in extraction'], 
                    skills: dict[str, list[str]] | str, hr_name: str | Literal['Unknown'], hr_link: str | Literal['Unknown'], resume: str, 
                    reposted: bool, date_listed: datetime | Literal['Unknown'], date_applied:  datetime | Literal['Pending'], job_link: str, application_link: str, 
-                   questions_list: set | None, connect_request: Literal['In Development'], search_term: str = '') -> None:
+                   questions_list: list[QuestionEntry] | None, connect_request: Literal['In Development'], search_term: str = '') -> None:
     '''
     Function to create or update the Applied jobs CSV file, once the application is submitted successfully
     '''
@@ -1413,7 +1952,7 @@ def submitted_jobs(job_id: str, title: str, company: str, work_location: str, wo
             writer.writerow({'Job ID':truncate_for_csv(job_id), 'Title':truncate_for_csv(title), 'Company':truncate_for_csv(company), 'Work Location':truncate_for_csv(work_location), 'Work Style':truncate_for_csv(work_style), 
                             'About Job':truncate_for_csv(description[:300] + ("..." if len(description) > 300 else "")), 'Experience required': truncate_for_csv(experience_required), 'Skills required':truncate_for_csv(skills), 
                                 'HR Name':truncate_for_csv(hr_name), 'HR Link':truncate_for_csv(hr_link), 'Resume':truncate_for_csv(resume), 'Search Term':truncate_for_csv(search_term), 'Re-posted':truncate_for_csv(reposted), 
-                                'Date Posted':truncate_for_csv(date_listed), 'Date Applied':truncate_for_csv(date_applied), 'Job Link':truncate_for_csv(job_link), 
+                                'Date Posted':fmt_date(date_listed), 'Date Applied':fmt_datetime(date_applied), 'Job Link':truncate_for_csv(job_link), 
                                 'External Job link':truncate_for_csv(application_link), 'Questions Found':truncate_for_csv(questions_formatted), 'Connect Request':truncate_for_csv(connect_request)})
         csv_file.close()
     except Exception as e:
@@ -1426,6 +1965,39 @@ def submitted_jobs(job_id: str, title: str, company: str, work_location: str, wo
 def discard_job() -> None:
     actions.send_keys(Keys.ESCAPE).perform()
     wait_span_click(driver, 'Discard', 2)
+
+
+def recover_browser_session(reason: Exception | str = "") -> bool:
+    '''Attempt a one-time browser/session recovery and LinkedIn re-login.'''
+    global driver, actions, wait, linkedIn_tab, tabs_count
+
+    print_lg(f"Attempting browser session recovery... Reason: {reason}")
+    try:
+        try:
+            if driver:
+                driver.quit()
+        except Exception:
+            pass
+
+        if auto_close_conflicting_chrome and bot_profile_dir:
+            close_conflicting_chrome_sessions(bot_profile_dir)
+
+        try:
+            _, driver, actions, wait = createChromeSession()
+        except Exception as primary_error:
+            print_lg("Primary recovery with dedicated profile failed, trying isolated profile...", primary_error)
+            _, driver, actions, wait = createChromeSession(True, get_isolated_temp_profile())
+
+        tabs_count = len(driver.window_handles)
+        driver.get("https://www.linkedin.com/login")
+        if not is_logged_in_LN():
+            login_LN()
+        linkedIn_tab = driver.current_window_handle
+        print_lg("Browser session recovery successful.")
+        return True
+    except Exception as recovery_error:
+        print_lg("Browser session recovery failed.", recovery_error)
+        return False
 
 
 
@@ -1456,7 +2028,11 @@ def apply_to_jobs(search_terms: list[str], per_term_cap: int = None, force_under
 
     if randomize_search_order:  shuffle(search_terms)
     last_uploaded_resume = None  # track which resume was last uploaded to trigger re-upload on term switch
-    for searchTerm in search_terms:
+    max_term_recovery_attempts = 2
+    term_recovery_attempts: dict[str, int] = {}
+    pending_search_terms = deque(search_terms)
+    while pending_search_terms:
+        searchTerm = pending_search_terms.popleft()
         # Select tailored resume for this search term; trigger re-upload if it differs from last.
         active_resume = get_resume_for_term(searchTerm)
         if active_resume != last_uploaded_resume:
@@ -1466,7 +2042,10 @@ def apply_to_jobs(search_terms: list[str], per_term_cap: int = None, force_under
         print_lg("\n________________________________________________________________________________________________________________________\n")
         print_lg(f'\n>>>> Now searching for "{searchTerm}" <<<<\n\n')
 
-        apply_filters(force_under_10=force_under_10)
+        filters_ok = apply_filters(force_under_10=force_under_10)
+        if not filters_ok:
+            print_lg(f'Skipping search term "{searchTerm}" because filter preflight verification failed.')
+            continue
 
         current_count = 0
         try:
@@ -1525,6 +2104,7 @@ def apply_to_jobs(search_terms: list[str], per_term_cap: int = None, force_under
                     reposted = False
                     questions_list = None
                     screenshot_name = "Not Available"
+                    jobs_top_card = None
 
                     try:
                         rejected_jobs, blacklisted_companies, jobs_top_card = check_blacklist(rejected_jobs,job_id,company,blacklisted_companies)
@@ -1581,6 +2161,8 @@ def apply_to_jobs(search_terms: list[str], per_term_cap: int = None, force_under
                     try:
                         # try: time_posted_text = find_by_class(driver, "jobs-unified-top-card__posted-date", 2).text
                         # except: 
+                        if jobs_top_card is None:
+                            raise Exception("jobs_top_card was not set (check_blacklist failed)")
                         time_posted_text = jobs_top_card.find_element(By.XPATH, './/span[contains(normalize-space(), " ago")]').text
                         print("Time Posted: " + time_posted_text)
                         if time_posted_text.__contains__("Reposted"):
@@ -1615,28 +2197,32 @@ def apply_to_jobs(search_terms: list[str], per_term_cap: int = None, force_under
                     # Case 1: Easy Apply Button
                     if try_xp(driver, ".//button[contains(@class,'jobs-apply-button') and contains(@class, 'artdeco-button--3') and contains(@aria-label, 'Easy')]"):
                         try: 
+                            modal = None
                             try:
                                 errored = ""
+                                easy_apply_stage = "open-modal"
                                 modal = find_by_class(driver, "jobs-easy-apply-modal")
                                 # Initial step may already be on questions/review; avoid noisy failure logs.
-                                next_btn = try_xp(modal, './/span[normalize-space(.)="Next"]', False)
-                                if not next_btn:
-                                    next_btn = try_xp(modal, './/button[contains(span, "Next")]', False)
-                                if next_btn:
-                                    try:
-                                        next_btn.click()
-                                        buffer(click_gap)
-                                    except Exception:
-                                        pass
+                                easy_apply_stage = "initial-next"
+                                click_modal_action(modal, "next", retries=2)
                                 # if description != "Unknown":
                                 #     resume = create_custom_resume(description)
                                 resume = os.path.join(os.path.basename(os.path.dirname(active_resume)), os.path.basename(active_resume))
                                 next_button = True
-                                questions_list = set()
+                                questions_list: list[QuestionEntry] = []
                                 next_counter = 0
+                                ai_retry_attempted = False
                                 while next_button:
+                                    modal = find_by_class(driver, "jobs-easy-apply-modal")
                                     next_counter += 1
-                                    if next_counter >= 15: 
+                                    if next_counter >= 15:
+                                        if not ai_retry_attempted:
+                                            # One-shot AI re-answer pass before resorting to pause or fail
+                                            print_lg("Stuck on questions page, attempting AI re-answer pass...")
+                                            questions_list = answer_questions(modal, questions_list, work_location, job_description=description)
+                                            ai_retry_attempted = True
+                                            next_counter = 1
+                                            continue
                                         if pause_at_failed_question:
                                             screenshot(driver, job_id, "Needed manual intervention for failed question")
                                             pyautogui.alert("Couldn't answer one or more questions.\nPlease click \"Continue\" once done.\nDO NOT CLICK Back, Next or Review button in LinkedIn.\n\n\n\n\nYou can turn off \"Pause at failed question\" setting in config.py", "Help Needed", "Continue")
@@ -1646,37 +2232,69 @@ def apply_to_jobs(search_terms: list[str], per_term_cap: int = None, force_under
                                         screenshot_name = screenshot(driver, job_id, "Failed at questions")
                                         errored = "stuck"
                                         raise Exception("Seems like stuck in a continuous loop of next, probably because of new questions.")
+                                    easy_apply_stage = "answer-questions"
                                     questions_list = answer_questions(modal, questions_list, work_location, job_description=description)
                                     if useNewResume and not uploaded: uploaded, resume = upload_resume(modal, active_resume)
-                                    try: next_button = modal.find_element(By.XPATH, './/span[normalize-space(.)="Review"]') 
-                                    except NoSuchElementException:  next_button = modal.find_element(By.XPATH, './/button[contains(span, "Next")]')
-                                    try: next_button.click()
-                                    except ElementClickInterceptedException: break    # Happens when it tries to click Next button in About Company photos section
+                                    if find_modal_action_button(modal, "review"):
+                                        next_button = False
+                                        easy_apply_stage = "review-click"
+                                        click_modal_action(modal, "review", retries=3)
+                                        buffer(click_gap)
+                                        break
+                                    easy_apply_stage = "next-click"
+                                    next_button = click_modal_action(modal, "next", retries=3)
+                                    if not next_button:
+                                        break
                                     buffer(click_gap)
+                                    # After clicking Next, detect inline field errors and rectify them before next loop
+                                    easy_apply_stage = "rectify-field-errors"
+                                    rectified = rectify_field_errors(modal, questions_list, job_description=description)
+                                    if rectified:
+                                        next_counter = max(next_counter - 2, 0)  # Give back counter budget for error-recovery iterations
 
                             except NoSuchElementException: errored = "nose"
                             finally:
                                 if questions_list and errored != "stuck":
                                     formatted_qs = "\n".join(f"  Q: {q[0]}\n  A: {q[1]}" for q in questions_list)
                                     print_lg(f"Answered the following questions...\n{formatted_qs}")
-                                review_btn = try_xp(driver, './/span[normalize-space(.)="Review"]', False)
-                                if review_btn:
-                                    try:
-                                        scroll_to_view(driver, review_btn, top=True)
-                                        review_btn.click()
-                                        buffer(click_gap)
-                                    except Exception:
-                                        pass
+                                try:
+                                    modal = find_by_class(driver, "jobs-easy-apply-modal")
+                                    easy_apply_stage = "review-final"
+                                    click_modal_action(modal, "review", retries=2)
+                                    buffer(click_gap)
+                                except Exception:
+                                    pass
                                 cur_pause_before_submit = pause_before_submit
                                 if errored != "stuck" and cur_pause_before_submit:
                                     decision = pyautogui.confirm('1. Please verify your information.\n2. If you edited something, please return to this final screen.\n3. DO NOT CLICK "Submit Application".\n\n\n\n\nYou can turn off "Pause before submit" setting in config.py\nTo TEMPORARILY disable pausing, click "Disable Pause"', "Confirm your information",["Disable Pause", "Discard Application", "Submit Application"])
                                     if decision == "Discard Application": raise Exception("Job application discarded by user!")
                                     pause_before_submit = False if "Disable Pause" == decision else True
                                     # try_xp(modal, ".//span[normalize-space(.)='Review']")
-                                follow_company(modal)
-                                if wait_span_click(driver, "Submit application", 2, scrollTop=True): 
+                                if not modal:
+                                    try:
+                                        modal = find_by_class(driver, "jobs-easy-apply-modal")
+                                    except Exception:
+                                        modal = None
+                                if modal:
+                                    follow_company(modal)
+                                submit_clicked = False
+                                try:
+                                    modal = find_by_class(driver, "jobs-easy-apply-modal")
+                                    easy_apply_stage = "submit-click"
+                                    submit_clicked = click_modal_action(modal, "submit", retries=3)
+                                except Exception:
+                                    submit_clicked = False
+
+                                if submit_clicked or wait_span_click(driver, "Submit application", 2, scrollTop=True):
                                     date_applied = datetime.now()
-                                    if not wait_span_click(driver, "Done", 2): actions.send_keys(Keys.ESCAPE).perform()
+                                    try:
+                                        modal = find_by_class(driver, "jobs-easy-apply-modal")
+                                        easy_apply_stage = "done-click"
+                                        done_clicked = click_modal_action(modal, "done", retries=2)
+                                    except Exception:
+                                        done_clicked = False
+                                    if not done_clicked and not wait_span_click(driver, "Done", 2):
+                                        actions.send_keys(Keys.ESCAPE).perform()
                                     # Cooldown after submission to avoid bursty submit patterns.
                                     sleep(uniform(8.0, 22.0))
                                 elif errored != "stuck" and cur_pause_before_submit and "Yes" in pyautogui.confirm("You submitted the application, didn't you 😒?", "Failed to find Submit Application!", ["Yes", "No"]):
@@ -1684,6 +2302,7 @@ def apply_to_jobs(search_terms: list[str], per_term_cap: int = None, force_under
                                     wait_span_click(driver, "Done", 2)
                                     sleep(uniform(8.0, 22.0))
                                 else:
+                                    easy_apply_stage = "submit-not-found"
                                     print_lg("Since, Submit Application failed, discarding the job application...")
                                     # if screenshot_name == "Not Available":  screenshot_name = screenshot(driver, job_id, "Failed to click Submit application")
                                     # else:   screenshot_name = [screenshot_name, screenshot(driver, job_id, "Failed to click Submit application")]
@@ -1692,9 +2311,9 @@ def apply_to_jobs(search_terms: list[str], per_term_cap: int = None, force_under
 
                         except Exception as e:
                             print_lg("Failed to Easy apply!")
-                            # print_lg(e)
-                            critical_error_log("Somewhere in Easy Apply process",e)
-                            failed_job(job_id, job_link, resume, date_listed, "Problem in Easy Applying", e, application_link, screenshot_name)
+                            stage_info = locals().get("easy_apply_stage", "unknown")
+                            critical_error_log(f"Easy Apply failed at stage: {stage_info}",e)
+                            failed_job(job_id, job_link, resume, date_listed, f"Problem in Easy Applying ({stage_info})", e, application_link, screenshot_name)
                             failed_count += 1
                             discard_job()
                             continue
@@ -1724,15 +2343,44 @@ def apply_to_jobs(search_terms: list[str], per_term_cap: int = None, force_under
                 if pagination_element == None:
                     print_lg("Couldn't find pagination element, probably at the end page of results!")
                     break
+                if is_easy_apply_modal_open():
+                    print_lg("Easy Apply modal still open before pagination. Trying to close it...")
+                    if not close_easy_apply_modal_if_open():
+                        print_lg("Could not close Easy Apply modal safely. Ending pagination for this term.")
+                        break
                 try:
-                    pagination_element.find_element(By.XPATH, f"//button[@aria-label='Page {current_page+1}']").click()
+                    next_page_button = pagination_element.find_element(By.XPATH, f"//button[@aria-label='Page {current_page+1}']")
+                    switched_page = False
+                    for _ in range(2):
+                        try:
+                            next_page_button.click()
+                            switched_page = True
+                            break
+                        except ElementClickInterceptedException:
+                            print_lg("Pagination click intercepted, attempting to close modal and retry.")
+                            if not close_easy_apply_modal_if_open():
+                                break
+                            sleep(0.4)
+                    if not switched_page:
+                        print_lg("Unable to paginate safely with current overlays. Ending pagination for this term.")
+                        break
                     print_lg(f"\n>-> Now on Page {current_page+1} \n")
                 except NoSuchElementException:
                     print_lg(f"\n>-> Didn't find Page {current_page+1}. Probably at the end page of results!\n")
                     break
 
         except (NoSuchWindowException, WebDriverException) as e:
-            print_lg("Browser window closed or session is invalid. Ending application process.", e)
+            print_lg("Browser window closed or session is invalid during apply loop.", e)
+            term_recovery_attempts[searchTerm] = term_recovery_attempts.get(searchTerm, 0) + 1
+            current_attempt = term_recovery_attempts[searchTerm]
+            if recover_browser_session(e):
+                if current_attempt < max_term_recovery_attempts:
+                    pending_search_terms.append(searchTerm)
+                    print_lg(f'Recovery succeeded. Re-queueing "{searchTerm}" (attempt {current_attempt}/{max_term_recovery_attempts}).')
+                    continue
+                print_lg(f'Recovery succeeded but retry budget exhausted for "{searchTerm}". Skipping this term.')
+                continue
+            print_lg("Recovery failed. Ending application process.")
             raise e # Re-raise to be caught by main
         except Exception as e:
             print_lg("Failed to find Job listings!")
@@ -1763,7 +2411,7 @@ def run(total_runs: int) -> int:
         print_lg(f"Pass 1 complete ({pass1_total} applied). Starting Pass 2 for remaining {remaining_per_term}/term slots...")
         apply_to_jobs(search_terms, per_term_cap=remaining_per_term, force_under_10=False)
     print_lg("########################################################################################################################\n")
-    if not dailyEasyApplyLimitReached:
+    if run_non_stop and not dailyEasyApplyLimitReached:
         print_lg("Sleeping for 10 min...")
         sleep(300)
         print_lg("Few more min... Gonna start with in next 5 min...")

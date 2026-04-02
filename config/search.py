@@ -19,7 +19,18 @@ version:    26.01.20.5.08
 
 # These Sentences are Searched in LinkedIn
 # Enter your search terms inside '[ ]' with quotes ' "searching title" ' for each search followed by comma ', ' Eg: ["Software Engineer", "Software Developer", "Selenium Developer"]
-search_terms = ["Billing Analyst", "Accounts Payable Analyst", "Finance Operations Analyst", "Billing Operations Specialist", "AP Specialist", "Invoice Analyst", "Finance Analyst", "Revenue Operations Analyst", "Accounts Receivable Analyst", "Financial Operations Specialist"]
+search_terms = [
+    "Finance Analyst",
+    "Financial Analyst",
+    "Billing Analyst",
+    "Invoice Analyst",
+    "Accounts Receivable Analyst",
+    "Accounts Payable Specialist",
+    "Finance Operations Analyst",
+    "Financial Operations Specialist",
+    "Billing Operations Specialist",
+    "Revenue Operations Analyst",
+]
 
 # Search location, this will be filled in "City, state, or zip code" search box. If left empty as "", tool will not fill it.
 search_location = "Europe"               # Some valid examples: "", "United States", "India", "Chicago, Illinois, United States", "90001, Los Angeles, California, United States", "Bengaluru, Karnataka, India", etc.
@@ -29,7 +40,7 @@ switch_number = 3                  # Only numbers greater than 0... Don't put in
 # NOTE: 3 per term × 10 terms = 30 max applications per run. LinkedIn Easy Apply limit is ~50/day; 30 leaves a safe buffer.
 
 # Do you want to randomize the search order for search_terms?
-randomize_search_order = True      # True of False, Note: True or False are case-sensitive
+randomize_search_order = True
 
 
 # >>>>>>>>>>> Job Search Filters <<<<<<<<<<<
@@ -76,7 +87,7 @@ fair_chance_employer = False       # True or False, Note: True or False are case
 ## >>>>>>>>>>> RELATED SETTING <<<<<<<<<<<
 
 # Pause after applying filters to let you modify the search results and filters?
-pause_after_filters = True         # True or False, Note: True or False are case-sensitive
+pause_after_filters = False        # True or False, Note: True or False are case-sensitive
 
 ##
 
@@ -92,12 +103,12 @@ about_company_bad_words = ["Crossover"]       # (dynamic multiple search) or lea
 about_company_good_words = []      # (dynamic multiple search) or leave empty as []. Ex: ["Robert Half", "Dice"]
 
 # Skip jobs whose TITLE contains any of these words/phrases. Checked early (before loading description), so it saves time. Case Insensitive.
-title_bad_words = ["Team Lead", "IT Analyst", "Systems Analyst", "Data Engineer", "Software Engineer", "Software Developer", "DevOps", "Machine Learning", "Data Science", "Cybersecurity", "Network Engineer", "Cloud Engineer"]   # or leave empty as []. Ex: ["IT Analyst", "Software Engineer"]
+title_bad_words = ["Consultant", "Team Lead", "IT Analyst", "Systems Analyst", "Data Engineer", "Software Engineer", "Software Developer", "DevOps", "Machine Learning", "Data Science", "Cybersecurity", "Network Engineer", "Cloud Engineer"]   # or leave empty as []. Ex: ["IT Analyst", "Software Engineer"]
 
 # Minimum LinkedIn skills match percentage required to apply. Uses LinkedIn's own "X of Y skills match" indicator on the job detail panel.
 # Set to 0 or -1 to disable. Requires your skills to be filled in on your LinkedIn profile.
 # If the indicator is absent (LinkedIn didn't compute a match), the job is NOT skipped.
-min_skills_match_percentage = 30   # 0 to 100, or -1 to disable
+min_skills_match_percentage = 20   # 0 to 100, or -1 to disable
 
 # Avoid applying to these companies if they have these bad words in their 'Job Description' section...  (In development)
 bad_words = ["US Citizen", "USA Citizen", "No C2C", "No Corp2Corp", "Software Engineer", "Software Developer", "Machine Learning", "Data Science", "DevOps", "Cybersecurity", "Security Clearance", "Polygraph"]                     # (dynamic multiple search) or leave empty as []. Case Insensitive. Ex: ["word_1", "phrase 1", "word word", "polygraph", "US Citizenship", "Security Clearance"]
