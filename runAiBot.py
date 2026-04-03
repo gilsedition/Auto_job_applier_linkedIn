@@ -83,7 +83,10 @@ failed_count = 0
 skip_count = 0
 dailyEasyApplyLimitReached = False
 
-re_experience = re.compile(r'[(]?\s*(\d+)\s*[)]?\s*[-to]*\s*\d*[+]*\s*year[s]?', re.IGNORECASE)
+re_experience = re.compile(
+    r"[(]?\s*\+?\s*(\d{1,2})\s*[)]?\s*(?:[-–toaà]\s*\d{1,2}\+?\s*)?(?:\+?\s*)?(?:year|years|yr|yrs|an|ans|annee|annees)\b",
+    re.IGNORECASE,
+)
 
 current_ctc_lakhs = str(round(current_ctc / 100000, 2))
 current_ctc_monthly = str(round(current_ctc/12, 2))
@@ -438,6 +441,31 @@ def configured_experience_years() -> int:
     except Exception:
         pass
     return max(experience_values) if experience_values else 0
+
+
+def get_skill_specific_experience_answer(normalized_label: str) -> str | None:
+    label = normalize_select_text(normalized_label)
+    asks_years = any(token in label for token in ["experience", "years", "annee", "annees", "ans"])
+    if not asks_years:
+        return None
+
+    if "sap businessobjects" in label or "businessobjects" in label or "business objects" in label:
+        return globals().get("sap_businessobjects_years_of_experience", "2")
+    if "excel" in label or "spreadsheet" in label:
+        return globals().get("excel_years_of_experience", years_of_experience)
+    if (
+        "human resources" in label
+        or "ressources humaines" in label
+        or "(rh)" in label
+        or "people operations" in label
+        or "people ops" in label
+        or "recruit" in label
+        or " rh " in f" {label} "
+        or " hr " in f" {label} "
+    ):
+        return globals().get("hr_years_of_experience", "1")
+
+    return None
 
 
 def extract_experience_threshold(label: str) -> tuple[int, bool] | None:
@@ -1194,11 +1222,15 @@ def get_job_main_details(job: WebElement, blacklisted_companies: set, rejected_j
     
     # Skip if previously rejected due to blacklist or already applied
     title_low = title.lower()
+    title_norm = normalize_select_text(title)
     for word in title_bad_words:
         if word.lower() in title_low:
             print_lg(f'Skipping "{title} | {company}" job (Bad word "{word}" in title). Job ID: {job_id}!')
             skip = True
             break
+    if not skip and re.search(r"\blead\b", title_norm):
+        print_lg(f'Skipping "{title} | {company}" job (Lead role in title). Job ID: {job_id}!')
+        skip = True
     if not skip and company in blacklisted_companies:
         print_lg(f'Skipping "{title} | {company}" job (Blacklisted Company). Job ID: {job_id}!')
         skip = True
@@ -1263,7 +1295,8 @@ def get_linkedin_skills_match() -> tuple[int, int] | None:
 # Function to extract years of experience required from About Job
 def extract_years_of_experience(text: str) -> int:
     # Extract all patterns like '10+ years', '5 years', '3-5 years', etc.
-    matches = re.findall(re_experience, text)
+    normalized_text = normalize_select_text(text)
+    matches = re.findall(re_experience, normalized_text)
     if len(matches) == 0: 
         print_lg("Couldn't find experience requirement in About the Job!")
         return 0
@@ -1356,6 +1389,7 @@ def get_resume_for_term(search_term: str) -> str:
 def answer_common_questions(label: str, answer: str, work_location: str) -> str:
     normalized_label = normalize_select_text(label)
     experience_threshold = extract_experience_threshold(normalized_label)
+    skill_specific_experience = get_skill_specific_experience_answer(normalized_label)
     if 'sponsorship' in normalized_label or 'visa' in normalized_label:
         answer = get_visa_answer(work_location)
     elif any(phrase in normalized_label for phrase in ['living in', 'based in', 'reside in', 'residing in', 'located in', 'authorized to work in', 'allowed to work in', 'right to work in', 'permission to work in', 'eligible to work in', 'currently in', 'live in']):
@@ -1365,6 +1399,10 @@ def answer_common_questions(label: str, answer: str, work_location: str) -> str:
         profile_experience = configured_experience_years()
         meets_threshold = profile_experience > threshold if is_strict else profile_experience >= threshold
         answer = 'Yes' if meets_threshold else 'No'
+    elif skill_specific_experience is not None:
+        answer = skill_specific_experience
+    elif any(token in normalized_label for token in ['experience', 'years', 'annee', 'annees', 'ans']):
+        answer = years_of_experience
     elif any(term in normalized_label for term in ['interested in', 'interesado', 'interesada']) and any(term in normalized_label for term in ['contract', 'contrato']):
         answer = 'Yes'
     elif any(phrase in normalized_label for phrase in ['prevent you from working', 'conditions or agreements prevent', 'conditions prevent you', 'agreement prevent']):
