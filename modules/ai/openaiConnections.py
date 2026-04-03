@@ -16,10 +16,8 @@ version:    26.01.20.5.08
 
 
 from config.secrets import *
-from config.settings import showAiErrorAlerts
-from config.personals import ethnicity, gender, disability_status, veteran_status
+import config.settings as settings
 from config.questions import *
-from config.search import security_clearance, did_masters
 
 from modules.helpers import print_lg, critical_error_log, convert_to_json
 from modules.ai.prompts import *
@@ -29,7 +27,7 @@ from pyautogui import confirm
 from openai import OpenAI
 from openai.types.model import Model
 from openai.types.chat import ChatCompletion, ChatCompletionChunk
-from typing import Iterator, Literal
+from typing import Literal
 import time
 
 
@@ -49,10 +47,9 @@ def ai_error_alert(message: str, stackTrace: str, title: str = "AI Connection Er
     """
     Function to show an AI error alert and log it.
     """
-    global showAiErrorAlerts
-    if showAiErrorAlerts:
+    if settings.showAiErrorAlerts:
         if "Pause AI error alerts" == confirm(f"{message}{stackTrace}\n", title, ["Pause AI error alerts", "Okay Continue"]):
-            showAiErrorAlerts = False
+            settings.showAiErrorAlerts = False
     critical_error_log(message, stackTrace)
 
 
@@ -329,16 +326,6 @@ def ai_generate_coverletter(
 
 
 ##< Evaluation Agents
-def ai_evaluate_resume(
-    client: OpenAI, 
-    job_description: str, about_company: str, required_skills: dict,
-    resume: str,
-    stream: bool = stream_output
-) -> dict | ValueError:
-    pass
-
-
-
 def ai_evaluate_resume(
     client: OpenAI, 
     job_description: str, about_company: str, required_skills: dict,

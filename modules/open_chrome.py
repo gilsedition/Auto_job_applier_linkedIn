@@ -14,7 +14,7 @@ Support me: https://github.com/sponsors/GodsScion
 version:    26.01.20.5.08
 '''
 
-from modules.helpers import get_default_temp_profile, make_directories
+from modules.helpers import get_default_temp_profile, make_directories, critical_error_log
 from config.settings import run_in_background, stealth_mode, disable_extensions, safe_mode, file_name, failed_file_name, logs_folder_path, generated_resume_path, chrome_profile_name, bot_profile_dir, auto_close_conflicting_chrome
 from config.questions import default_resume_path
 import os
@@ -28,7 +28,7 @@ else:
     # from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.action_chains import ActionChains
 from selenium.webdriver.support.ui import WebDriverWait
-from modules.helpers import find_default_profile_directory, critical_error_log, print_lg, find_profile_folder_by_name
+from modules.helpers import find_default_profile_directory, print_lg, find_profile_folder_by_name
 from selenium.common.exceptions import SessionNotCreatedException
 
 def get_isolated_temp_profile() -> str:
@@ -130,8 +130,9 @@ def createChromeSession(isRetry: bool = False, retry_profile_dir: str | None = N
     actions = ActionChains(driver)
     return options, driver, actions, wait
 
+options, driver, actions, wait = None, None, None, None
+
 try:
-    options, driver, actions, wait = None, None, None, None
     options, driver, actions, wait = createChromeSession()
 except SessionNotCreatedException as e:
     critical_error_log("Failed to create Chrome Session, retrying with guest profile", e)
@@ -154,11 +155,11 @@ except SessionNotCreatedException as e:
             raise
 except Exception as e:
     msg = 'Seems like Google Chrome is out dated. Update browser and try again! \n\n\nIf issue persists, try Safe Mode. Set, safe_mode = True in config.py \n\nPlease check GitHub discussions/support for solutions https://github.com/GodsScion/Auto_job_applier_linkedIn \n                                   OR \nReach out in discord ( https://discord.gg/fFp7uUzWCY )'
-    if isinstance(e,TimeoutError): msg = "Couldn't download Chrome-driver. Set stealth_mode = False in config!"
+    if isinstance(e, TimeoutError): msg = "Couldn't download Chrome-driver. Set stealth_mode = False in config!"
     print_lg(msg)
     critical_error_log("In Opening Chrome", e)
     from pyautogui import alert
     alert(msg, "Error in opening chrome")
     try: driver.quit()
     except NameError: exit()
-    
+

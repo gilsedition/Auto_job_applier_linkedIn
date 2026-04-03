@@ -42,9 +42,8 @@ def wait_span_click(driver: WebDriver, text: str, time: float=5.0, click: bool=T
                 button.click()
                 buffer(click_gap)
             return button
-        except Exception as e:
+        except Exception:
             print_lg("Click Failed! Didn't find '"+text+"'")
-            # print_lg(e)
             return False
 
 def multi_sel(driver: WebDriver, texts: list, time: float=5.0) -> None:
@@ -61,9 +60,8 @@ def multi_sel(driver: WebDriver, texts: list, time: float=5.0) -> None:
             scroll_to_view(driver, button)
             button.click()
             buffer(click_gap)
-        except Exception as e:
+        except Exception:
             print_lg("Click Failed! Didn't find '"+text+"'")
-            # print_lg(e)
 
 def multi_sel_noWait(driver: WebDriver, texts: list, actions: ActionChains = None) -> None:
     '''
@@ -77,10 +75,9 @@ def multi_sel_noWait(driver: WebDriver, texts: list, actions: ActionChains = Non
             scroll_to_view(driver, button)
             button.click()
             buffer(click_gap)
-        except Exception as e:
+        except Exception:
             if actions: company_search_click(driver,actions,text)
             else:   print_lg("Click Failed! Didn't find '"+text+"'")
-            # print_lg(e)
 
 def boolean_button_click(driver: WebDriver, actions: ActionChains, text: str) -> None:
     '''
@@ -92,9 +89,8 @@ def boolean_button_click(driver: WebDriver, actions: ActionChains, text: str) ->
         scroll_to_view(driver, button)
         actions.move_to_element(button).click().perform()
         buffer(click_gap)
-    except Exception as e:
+    except Exception:
         print_lg("Click Failed! Didn't find '"+text+"'")
-        # print_lg(e)
 
 # Find functions
 def find_by_class(driver: WebDriver, class_name: str, time: float=5.0) -> WebElement | Exception:
@@ -156,6 +152,22 @@ def company_search_click(driver: WebDriver, actions: ActionChains, companyName: 
     actions.send_keys(Keys.DOWN).perform()
     actions.send_keys(Keys.ENTER).perform()
     print_lg(f'Tried searching and adding "{companyName}"')
+
+def location_search_click(driver: WebDriver, actions: ActionChains, locationName: str) -> None:
+    '''
+    Tries to search and Add the location to location filters list.
+    '''
+    try:
+        wait_span_click(driver, "Add a location", 1)
+        search = driver.find_element(By.XPATH, "(.//input[@placeholder='Add a location'])[1]")
+        search.send_keys(Keys.CONTROL + "a")
+        search.send_keys(locationName)
+        buffer(3)
+        actions.send_keys(Keys.DOWN).perform()
+        actions.send_keys(Keys.ENTER).perform()
+        print_lg(f'Tried searching and adding location "{locationName}"')
+    except Exception:
+        print_lg(f'Click Failed! Didn\'t find location "{locationName}"')
 
 def text_input(actions: ActionChains, textInputEle: WebElement | bool, value: str, textFieldName: str = "Text") -> None | Exception:
     if textInputEle:

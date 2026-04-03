@@ -19,7 +19,6 @@ version:    26.01.20.5.08
 import os
 import csv
 import re
-import time
 import unicodedata
 import pyautogui
 from collections import deque
@@ -27,7 +26,7 @@ from collections import deque
 # Set CSV field size limit to prevent field size errors
 csv.field_size_limit(1000000)  # Set to 1MB instead of default 131KB
 
-from random import choice, shuffle, randint, uniform
+from random import shuffle, randint, uniform
 from datetime import datetime
 
 from selenium.webdriver.common.by import By
@@ -51,9 +50,9 @@ from modules.validator import validate_config
 
 if use_AI:
     from modules.ai.openaiConnections import ai_create_openai_client, ai_answer_question, ai_close_openai_client
-    from modules.ai.deepseekConnections import deepseek_create_client, deepseek_extract_skills, deepseek_answer_question
+    from modules.ai.deepseekConnections import deepseek_create_client, deepseek_answer_question
     if ai_provider == "gemini":
-        from modules.ai.geminiConnections import gemini_create_client, gemini_extract_skills, gemini_answer_question
+        from modules.ai.geminiConnections import gemini_create_client, gemini_answer_question
 
 from typing import Any, Literal
 
@@ -914,31 +913,28 @@ def login_LN() -> None:
         wait.until(EC.presence_of_element_located((By.LINK_TEXT, "Forgot password?")))
         try:
             text_input_by_ID(driver, "username", username, 1)
-        except Exception as e:
+        except Exception:
             print_lg("Couldn't find username field.")
-            # print_lg(e)
         try:
             text_input_by_ID(driver, "password", password, 1)
-        except Exception as e:
+        except Exception:
             print_lg("Couldn't find password field.")
             # print_lg(e)
         # Find the login submit button and click it
         driver.find_element(By.XPATH, '//button[@type="submit" and contains(text(), "Sign in")]').click()
-    except Exception as e1:
+    except Exception:
         try:
             profile_button = find_by_class(driver, "profile__details")
             profile_button.click()
-        except Exception as e2:
-            # print_lg(e1, e2)
+        except Exception:
             print_lg("Couldn't Login!")
 
     try:
         # Wait until successful redirect, indicating successful login
         wait.until(EC.url_to_be("https://www.linkedin.com/feed/")) # wait.until(EC.presence_of_element_located((By.XPATH, '//button[normalize-space(.)="Start a post"]')))
         return print_lg("Login successful!")
-    except Exception as e:
+    except Exception:
         print_lg("Seems like login attempt failed! Possibly due to wrong credentials or already logged in! Try logging in manually!")
-        # print_lg(e)
         manual_login_retry(is_logged_in_LN, 2)
 #>
 
@@ -1012,7 +1008,14 @@ def apply_filters(force_under_10: bool = False, date_posted_override: str | None
 
         set_boolean_filter_state("Easy Apply", bool(easy_apply_only))
         
-        multi_sel_noWait(driver, location)
+        for loc in location:
+            try:
+                btn = driver.find_element(By.XPATH, f'.//span[normalize-space(.)="{loc}"]')
+                scroll_to_view(driver, btn)
+                btn.click()
+                buffer(click_gap)
+            except Exception:
+                location_search_click(driver, actions, loc)
         multi_sel_noWait(driver, industry)
         if location or industry: buffer(recommended_wait)
 
@@ -1151,11 +1154,10 @@ def get_job_main_details(job: WebElement, blacklisted_companies: set, rejected_j
     except: pass
     try: 
         if not skip: job_details_button.click()
-    except Exception as e:
-        print_lg(f'Failed to click "{title} | {company}" job on details button. Job ID: {job_id}!') 
-        # print_lg(e)
+    except Exception:
+        print_lg(f'Failed to click "{title} | {company}" job on details button. Job ID: {job_id}!')
         discard_job()
-        job_details_button.click() # To pass the error outside
+        job_details_button.click()
     buffer(click_gap)
     return (job_id,title,company,work_location,work_style,skip)
 
@@ -1264,12 +1266,11 @@ def get_job_description(
                 skipMessage = f'Experience required {experience_required} > Current Experience {current_experience + found_masters}. Skipping this job!\nDescription snippet: "{desc_snippet}"'
                 skipReason = "Required experience is high"
                 skip = True
-    except Exception as e:
+    except Exception:
         if jobDescription == "Unknown":    print_lg("Unable to extract job description!")
         else:
             experience_required = "Error in extraction"
             print_lg("Unable to extract years of experience required!")
-            # print_lg(e)
     return jobDescription, experience_required, skip, skipReason, skipMessage
         
 
@@ -1935,7 +1936,7 @@ def external_apply(pagination_element: WebElement, job_id: str, job_link: str, r
     '''
     Function to open new tab and save external job application links
     '''
-    global tabs_count, dailyEasyApplyLimitReached
+    global tabs_count
     if easy_apply_only:
         detect_daily_easy_apply_limit("external-apply")
         print_lg("Easy apply failed I guess!")
@@ -2100,7 +2101,7 @@ def apply_to_jobs(search_terms: list[str], per_term_cap: int = None, force_under
     applied_jobs = get_applied_job_ids()
     rejected_jobs = set()
     blacklisted_companies = set()
-    global current_city, failed_count, skip_count, easy_applied_count, external_jobs_count, tabs_count, pause_before_submit, pause_at_failed_question, useNewResume
+    global current_city, failed_count, skip_count, easy_applied_count, external_jobs_count, tabs_count, pause_before_submit, useNewResume
     current_city = current_city.strip()
     # Vary interaction tempo and cap run size to reduce aggressive behavior patterns.
     session_click_gap = round(uniform(1.2, 3.2), 1)
@@ -2169,7 +2170,7 @@ def apply_to_jobs(search_terms: list[str], per_term_cap: int = None, force_under
                         if job_id in applied_jobs or find_by_class(driver, "jobs-s-apply__application-link", 2):
                             print_lg(f'Already applied to "{title} | {company}" job. Job ID: {job_id}!')
                             continue
-                    except Exception as e:
+                    except Exception:
                         print_lg(f'Trying to Apply to "{title} | {company}" job. Job ID: {job_id}')
 
                     # Simulate reading behavior before interacting with Easy Apply.
@@ -2205,9 +2206,8 @@ def apply_to_jobs(search_terms: list[str], per_term_cap: int = None, force_under
                         failed_job(job_id, job_link, resume, date_listed, "Found Blacklisted words in About Company", e, "Skipped", screenshot_name)
                         skip_count += 1
                         continue
-                    except Exception as e:
+                    except Exception:
                         print_lg("Failed to scroll to About Company!")
-                        # print_lg(e)
 
                     if min_skills_match_percentage > 0:
                         skills_match = get_linkedin_skills_match()
@@ -2244,9 +2244,8 @@ def apply_to_jobs(search_terms: list[str], per_term_cap: int = None, force_under
                         #     message_box = driver.find_element(By.XPATH, "//div[@aria-label='Write a message…']")
                         #     message_box.send_keys()
                         #     try_xp(driver, "//button[normalize-space()='Send']")        
-                    except Exception as e:
+                    except Exception:
                         print_lg(f'HR info was not given for "{title}" with Job ID: {job_id}!')
-                        # print_lg(e)
 
 
                     # Calculation of date posted

@@ -1,6 +1,6 @@
 import google.generativeai as genai
 from config.secrets import llm_model, llm_api_key
-from config.settings import showAiErrorAlerts
+import config.settings as settings
 from modules.helpers import print_lg, critical_error_log, convert_to_json
 from modules.ai.prompts import *
 from pyautogui import confirm
@@ -48,11 +48,11 @@ def gemini_create_client():
         
         return model
     except Exception as e:
-        error_message = f"Error occurred while configuring Gemini client. Make sure your API key and model name are correct."
+        error_message = "Error occurred while configuring Gemini client. Make sure your API key and model name are correct."
         critical_error_log(error_message, e)
-        if showAiErrorAlerts:
+        if settings.showAiErrorAlerts:
             if "Pause AI error alerts" == confirm(f"{error_message}\n{str(e)}", "Gemini Connection Error", ["Pause AI error alerts", "Okay Continue"]):
-                showAiErrorAlerts = False
+                settings.showAiErrorAlerts = False
         return None
 
 def gemini_completion(model, prompt: str, is_json: bool = False) -> dict | str:
@@ -89,7 +89,7 @@ def gemini_completion(model, prompt: str, is_json: bool = False) -> dict | str:
             },
         ]
 
-        print_lg(f"Calling Gemini API for completion...")
+        print_lg("Calling Gemini API for completion...")
         response = model.generate_content(prompt, safety_settings=safety_settings)
         
         # The response might be blocked. Check for that.
@@ -109,7 +109,7 @@ def gemini_completion(model, prompt: str, is_json: bool = False) -> dict | str:
         
         return result
     except Exception as e:
-        critical_error_log(f"Error occurred while getting Gemini completion!", e)
+        critical_error_log("Error occurred while getting Gemini completion!", e)
         return {"error": str(e)}
 
 def gemini_extract_skills(model, job_description: str) -> list[str] | None:

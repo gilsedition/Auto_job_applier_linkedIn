@@ -1,14 +1,12 @@
 ##> ------ Yang Li : MARKYangL - Feature ------
 from config.secrets import *
-from config.settings import showAiErrorAlerts
+import config.settings as settings
 from modules.helpers import print_lg, critical_error_log, convert_to_json
 from modules.ai.prompts import *
 
 from pyautogui import confirm
 from openai import OpenAI
-from openai.types.model import Model
-from openai.types.chat import ChatCompletion, ChatCompletionChunk
-from typing import Iterator, Literal
+from typing import Literal
 
 def deepseek_create_client() -> OpenAI | None:
     '''
@@ -38,11 +36,11 @@ def deepseek_create_client() -> OpenAI | None:
         ##<
         return client
     except Exception as e:
-        error_message = f"Error occurred while creating DeepSeek client. Make sure your API connection details are correct."
+        error_message = "Error occurred while creating DeepSeek client. Make sure your API connection details are correct."
         critical_error_log(error_message, e)
-        if showAiErrorAlerts:
+        if settings.showAiErrorAlerts:
             if "Pause AI error alerts" == confirm(f"{error_message}\n{str(e)}", "DeepSeek Connection Error", ["Pause AI error alerts", "Okay Continue"]):
-                showAiErrorAlerts = False
+                settings.showAiErrorAlerts = False
         return None
 
 def deepseek_model_supports_temperature(model_name: str) -> bool:
@@ -88,7 +86,7 @@ def deepseek_completion(client: OpenAI, messages: list[dict], response_format: d
 
     try:
         # Make the API call
-        print_lg(f"Calling DeepSeek API for completion...")
+        print_lg("Calling DeepSeek API for completion...")
         print_lg(f"Using model: {llm_model}")
         print_lg(f"Message count: {len(messages)}")
         completion = client.chat.completions.create(**params)

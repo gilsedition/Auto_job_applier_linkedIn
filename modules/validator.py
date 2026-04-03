@@ -68,6 +68,8 @@ def validate_personals() -> None | ValueError | TypeError:
     check_string(zipcode, "zipcode")
     check_string(country, "country")
     
+    check_string(phone_country_code, "phone_country_code")
+    check_string(current_country, "current_country")
     check_string(ethnicity, "ethnicity", ["Decline", "Hispanic/Latino", "American Indian or Alaska Native", "Asian", "Black or African American", "Native Hawaiian or Other Pacific Islander", "White", "Other"],  min_length=0)
     check_string(gender, "gender", ["Male", "Female", "Other", "Decline", ""])
     check_string(disability_status, "disability_status", ["Yes", "No", "Decline"])
@@ -85,7 +87,7 @@ def validate_questions() -> None | ValueError | TypeError:
 
     check_string(default_resume_path, "default_resume_path")
     check_string(years_of_experience, "years_of_experience")
-    check_string(require_visa, "require_visa", ["Yes", "No"])
+    check_string(require_visa_default, "require_visa_default", ["Yes", "No"])
     check_string(website, "website")
     check_string(linkedIn, "linkedIn")
     check_int(desired_salary, "desired_salary")
@@ -98,6 +100,8 @@ def validate_questions() -> None | ValueError | TypeError:
     check_string(recent_employer, "recent_employer")
     check_string(confidence_level, "confidence_level")
 
+    check_string(motivation_answer, "motivation_answer")
+    if not isinstance(resume_map, dict): raise TypeError('The variable "resume_map" in "config/questions.py" must be a Dict!')
     check_boolean(pause_before_submit, "pause_before_submit")
     check_boolean(pause_at_failed_question, "pause_at_failed_question")
     check_boolean(overwrite_previous_answers, "overwrite_previous_answers")
@@ -142,10 +146,12 @@ def validate_search() -> None | ValueError | TypeError:
 
     check_list(about_company_bad_words, "about_company_bad_words")
     check_list(about_company_good_words, "about_company_good_words")
+    check_list(title_bad_words, "title_bad_words")
     check_list(bad_words, "bad_words")
     check_boolean(security_clearance, "security_clearance")
     check_boolean(did_masters, "did_masters")
     check_int(current_experience, "current_experience", -1)
+    check_int(min_skills_match_percentage, "min_skills_match_percentage", -1)
 
 
 
@@ -211,9 +217,13 @@ def validate_settings() -> None | ValueError | TypeError:
     check_boolean(run_in_background, "run_in_background")
     check_boolean(disable_extensions, "disable_extensions")
     check_boolean(safe_mode, "safe_mode")
+    check_string(chrome_profile_name, "chrome_profile_name")
+    check_boolean(auto_close_conflicting_chrome, "auto_close_conflicting_chrome")
+    check_string(bot_profile_dir, "bot_profile_dir")
     check_boolean(smooth_scroll, "smooth_scroll")
     check_boolean(keep_screen_awake, "keep_screen_awake")
     check_boolean(stealth_mode, "stealth_mode")
+    check_boolean(showAiErrorAlerts, "showAiErrorAlerts")
 
 
 
