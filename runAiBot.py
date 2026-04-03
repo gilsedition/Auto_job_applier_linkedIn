@@ -1584,6 +1584,17 @@ def answer_questions(modal: WebElement, questions_list: list[QuestionEntry], wor
                 if 'birth' in label: answer = birth_year
                 elif ('experience' in label or 'years' in label) and ('excel' in label or 'spreadsheet' in label):
                     answer = globals().get("excel_years_of_experience", years_of_experience)
+                elif ('experience' in label or 'years' in label or 'annee' in label or 'annees' in label or 'an' in label or 'ans' in label) and (
+                    'human resources' in label
+                    or 'ressources humaines' in label
+                    or '(rh)' in label
+                    or 'rh ' in f"{label} "
+                    or 'hr ' in f"{label} "
+                    or 'people ops' in label
+                    or 'people operations' in label
+                    or 'recruit' in label
+                ):
+                    answer = globals().get("hr_years_of_experience", "1")
                 elif 'experience' in label or 'years' in label: answer = years_of_experience
                 elif 'phone' in label or 'mobile' in label: answer = phone_number
                 elif 'email' in label: answer = email
