@@ -1118,6 +1118,53 @@ def get_page_info() -> tuple[WebElement | None, int | None]:
     return pagination_element, current_page
 
 
+def has_no_matching_jobs_banner() -> bool:
+    '''
+    Detect LinkedIn "no matching jobs" banner so we can skip suggested jobs and move to next term.
+    '''
+    banner_selectors = [
+        "//div[contains(@class, 'jobs-search-no-results-banner')]",
+        "//div[contains(@class, 'jobs-search-no-results')]",
+    ]
+
+    for selector in banner_selectors:
+        try:
+            banners = driver.find_elements(By.XPATH, selector)
+        except Exception:
+            banners = []
+        for banner in banners:
+            try:
+                if not banner.is_displayed():
+                    continue
+                banner_text = normalize_select_text(banner.text or "")
+                if any(
+                    token in banner_text
+                    for token in [
+                        "no matching jobs found",
+                        "aucun emploi correspondant",
+                        "no jobs found",
+                    ]
+                ):
+                    return True
+            except Exception:
+                continue
+
+    # Fallback text detection for localized/variant DOM layouts.
+    fallback_xpaths = [
+        "//*[contains(translate(normalize-space(.), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'no matching jobs found')]",
+        "//*[contains(translate(normalize-space(.), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'aucun emploi correspondant')]",
+    ]
+    for selector in fallback_xpaths:
+        try:
+            match_nodes = driver.find_elements(By.XPATH, selector)
+            if match_nodes:
+                return True
+        except Exception:
+            continue
+
+    return False
+
+
 
 def get_job_main_details(job: WebElement, blacklisted_companies: set, rejected_jobs: set) -> tuple[str, str, str, str, str, bool]:
     '''
@@ -2165,9 +2212,16 @@ def apply_to_jobs(
             print_lg(f'Skipping search term "{searchTerm}" because filter preflight verification failed.')
             continue
 
+        if has_no_matching_jobs_banner():
+            print_lg(f'No matching jobs found for "{searchTerm}". Skipping to next term.')
+            continue
+
         current_count = 0
         try:
             while current_count < session_switch_cap:
+                if has_no_matching_jobs_banner():
+                    print_lg(f'No matching jobs found for "{searchTerm}". Skipping to next term.')
+                    break
                 if detect_daily_easy_apply_limit("apply-loop"):
                     print_lg("\n###############  Daily application limit for Easy Apply is reached!  ###############\n")
                     return pass_total
