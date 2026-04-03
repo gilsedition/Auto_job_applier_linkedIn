@@ -957,20 +957,21 @@ def get_applied_job_ids() -> set[str]:
 
 
 
-def set_search_location() -> None:
+def set_search_location(search_location_override: str | None = None) -> None:
     '''
     Function to set search location
     '''
-    if search_location.strip():
+    target_search_location = (search_location_override or search_location).strip()
+    if target_search_location:
         try:
-            print_lg(f'Setting search location as: "{search_location.strip()}"')
+            print_lg(f'Setting search location as: "{target_search_location}"')
             search_location_ele = try_xp(driver, ".//input[@aria-label='City, state, or zip code'and not(@disabled)]", False) #  and not(@aria-hidden='true')]")
-            text_input(actions, search_location_ele, search_location, "Search Location")
+            text_input(actions, search_location_ele, target_search_location, "Search Location")
         except ElementNotInteractableException:
             try_xp(driver, ".//label[@class='jobs-search-box__input-icon jobs-search-box__keywords-label']")
             actions.send_keys(Keys.TAB, Keys.TAB).perform()
             actions.key_down(Keys.CONTROL).send_keys("a").key_up(Keys.CONTROL).perform()
-            actions.send_keys(search_location.strip()).perform()
+            actions.send_keys(target_search_location).perform()
             sleep(2)
             actions.send_keys(Keys.ENTER).perform()
             try_xp(driver, ".//button[@aria-label='Cancel']")
@@ -979,14 +980,20 @@ def set_search_location() -> None:
             print_lg("Failed to update search location, continuing with default location!", e)
 
 
-def apply_filters(force_under_10: bool = False, date_posted_override: str | None = None) -> bool:
+def apply_filters(
+    force_under_10: bool = False,
+    date_posted_override: str | None = None,
+    search_location_override: str | None = None,
+    location_override: list[str] | None = None,
+) -> bool:
     '''
     Function to apply job search filters.
     force_under_10: when True, enables the "Under 10 applicants" filter regardless of config.
     date_posted_override: when provided, applies this date filter for the current pass.
     '''
-    set_search_location()
+    set_search_location(search_location_override)
     selected_date_posted = date_posted_override or date_posted
+    selected_locations = location_override if location_override is not None else location
 
     try:
         recommended_wait = 1 if click_gap < 1 else 0
@@ -1008,16 +1015,20 @@ def apply_filters(force_under_10: bool = False, date_posted_override: str | None
 
         set_boolean_filter_state("Easy Apply", bool(easy_apply_only))
         
-        for loc in location:
+        location_click_failures = 0
+        for loc in selected_locations:
             try:
                 btn = driver.find_element(By.XPATH, f'.//span[normalize-space(.)="{loc}"]')
                 scroll_to_view(driver, btn)
                 btn.click()
                 buffer(click_gap)
             except Exception:
-                location_search_click(driver, actions, loc)
+                if not location_search_click(driver, actions, loc):
+                    location_click_failures += 1
+        if selected_locations and location_click_failures == len(selected_locations):
+            print_lg("Location filters could not be applied; continuing without strict location chips for this term.")
         multi_sel_noWait(driver, industry)
-        if location or industry: buffer(recommended_wait)
+        if selected_locations or industry: buffer(recommended_wait)
 
         multi_sel_noWait(driver, job_function)
         multi_sel_noWait(driver, job_titles)
@@ -2067,11 +2078,7 @@ def recover_browser_session(reason: Exception | str = "") -> bool:
         if auto_close_conflicting_chrome and bot_profile_dir:
             close_conflicting_chrome_sessions(bot_profile_dir)
 
-        try:
-            _, driver, actions, wait = createChromeSession()
-        except Exception as primary_error:
-            print_lg("Primary recovery with dedicated profile failed, trying isolated profile...", primary_error)
-            _, driver, actions, wait = createChromeSession(True, get_isolated_temp_profile())
+        _, driver, actions, wait = createChromeSession()
 
         tabs_count = len(driver.window_handles)
         driver.get("https://www.linkedin.com/login")
@@ -2090,7 +2097,15 @@ def recover_browser_session(reason: Exception | str = "") -> bool:
 
 
 # Function to apply to jobs
-def apply_to_jobs(search_terms: list[str], per_term_cap: int = None, force_under_10: bool = False, date_posted_override: str | None = None) -> int:
+def apply_to_jobs(
+    search_terms: list[str],
+    per_term_cap: int = None,
+    force_under_10: bool = False,
+    date_posted_override: str | None = None,
+    search_location_override: str | None = None,
+    location_override: list[str] | None = None,
+    stage_label: str | None = None,
+) -> int:
     '''
     Apply to jobs across all search terms.
     per_term_cap: max applications per search term this pass (overrides session_switch_cap if lower).
@@ -2108,7 +2123,7 @@ def apply_to_jobs(search_terms: list[str], per_term_cap: int = None, force_under
     session_switch_cap = min(switch_number, 6)   # Hard safety cap: never exceed 6/term regardless of config (30 total with 10 terms)
     if per_term_cap is not None:
         session_switch_cap = min(per_term_cap, session_switch_cap)
-    pass_label = "Pass 1 [<10 applicants]" if force_under_10 else "Pass 2 [all jobs]"
+    pass_label = stage_label or ("Pass 1 [<10 applicants]" if force_under_10 else "Pass 2 [all jobs]")
     selected_date_posted = date_posted_override or date_posted
     print_lg(f"Session pacing: click_gap={session_click_gap}s, max applies/search={session_switch_cap} | {pass_label} | date_posted={selected_date_posted}")
     pass_total = 0
@@ -2129,7 +2144,12 @@ def apply_to_jobs(search_terms: list[str], per_term_cap: int = None, force_under
         print_lg("\n________________________________________________________________________________________________________________________\n")
         print_lg(f'\n>>>> Now searching for "{searchTerm}" <<<<\n\n')
 
-        filters_ok = apply_filters(force_under_10=force_under_10, date_posted_override=selected_date_posted)
+        filters_ok = apply_filters(
+            force_under_10=force_under_10,
+            date_posted_override=selected_date_posted,
+            search_location_override=search_location_override,
+            location_override=location_override,
+        )
         if not filters_ok:
             print_lg(f'Skipping search term "{searchTerm}" because filter preflight verification failed.')
             continue
@@ -2496,17 +2516,93 @@ def run(total_runs: int) -> int:
     print_lg(f"Cycle number: {total_runs}")
     print_lg(f"Currently looking for jobs posted within '{date_posted}' and sorting them by '{sort_by}'")
 
-    # Two-pass strategy: prioritise low-competition jobs first, then fill remaining budget.
-    pass1_per_term = max(1, switch_number // 2)           # first pass uses ~half the per-term budget on <10 applicant jobs
-    pass1_date_filter = "Past 24 hours"
-    pass2_date_filter = "Past week"
+    def _ordered_unique(values: list[str]) -> list[str]:
+        seen = set()
+        result = []
+        for value in values:
+            text = str(value).strip()
+            if not text:
+                continue
+            key = normalize_select_text(text)
+            if key in seen:
+                continue
+            seen.add(key)
+            result.append(text)
+        return result
 
-    print_lg(f"Pass 1 date filter: {pass1_date_filter}; Pass 2 date filter: {pass2_date_filter}")
-    pass1_total = apply_to_jobs(search_terms, per_term_cap=pass1_per_term, force_under_10=True, date_posted_override=pass1_date_filter)
-    remaining_per_term = max(0, switch_number - pass1_per_term)
-    if remaining_per_term > 0 and not dailyEasyApplyLimitReached:
-        print_lg(f"Pass 1 complete ({pass1_total} applied). Starting Pass 2 for remaining {remaining_per_term}/term slots...")
-        apply_to_jobs(search_terms, per_term_cap=remaining_per_term, force_under_10=False, date_posted_override=pass2_date_filter)
+    def _build_country_priority() -> list[str]:
+        configured = _ordered_unique(location)
+        if search_location.strip() and normalize_select_text(search_location) not in {normalize_select_text(x) for x in configured}:
+            configured.insert(0, search_location.strip())
+
+        normalized_map = {normalize_select_text(country): country for country in configured}
+        front_norm = ["france", "united kingdom"]
+        front = [normalized_map[norm] for norm in front_norm if norm in normalized_map]
+
+        front_keys = {normalize_select_text(country) for country in front}
+        remaining = [country for country in configured if normalize_select_text(country) not in front_keys]
+
+        english_group = {"ireland", "malta", "cyprus"}
+        french_group = {"belgium", "luxembourg", "switzerland", "monaco"}
+
+        english_first = [country for country in remaining if normalize_select_text(country) in english_group]
+        french_first = [country for country in remaining if normalize_select_text(country) in french_group]
+        grouped_keys = {normalize_select_text(country) for country in english_first + french_first}
+        rest = [country for country in remaining if normalize_select_text(country) not in grouped_keys]
+
+        return front + english_first + french_first + rest
+
+    def _build_stage_plan() -> list[dict[str, str | bool]]:
+        countries = _build_country_priority()
+        if not countries:
+            countries = [search_location.strip() or "France"]
+
+        core_keys = {"france", "united kingdom"}
+        core = [country for country in countries if normalize_select_text(country) in core_keys]
+        others = [country for country in countries if normalize_select_text(country) not in core_keys]
+
+        stages: list[dict[str, str | bool]] = []
+
+        # Stage 1: Past 24h under-10 only for France and UK first.
+        for country in core:
+            stages.append({"country": country, "date": "Past 24 hours", "under10": True})
+
+        # Stage 2: Past week under-10, then Past week all applicants (France + UK).
+        for country in core:
+            stages.append({"country": country, "date": "Past week", "under10": True})
+            stages.append({"country": country, "date": "Past week", "under10": False})
+
+        # Stage 3: Same sequence for remaining configured countries.
+        for country in others:
+            stages.append({"country": country, "date": "Past 24 hours", "under10": True})
+            stages.append({"country": country, "date": "Past week", "under10": True})
+            stages.append({"country": country, "date": "Past week", "under10": False})
+
+        return stages
+
+    stage_plan = _build_stage_plan()
+    under10_cap = max(1, switch_number // 2)
+
+    for stage_index, stage in enumerate(stage_plan, start=1):
+        if dailyEasyApplyLimitReached:
+            break
+        country = str(stage["country"])
+        stage_date = str(stage["date"])
+        stage_under10 = bool(stage["under10"])
+        stage_cap = under10_cap if stage_under10 else switch_number
+        stage_label = f"Stage {stage_index}/{len(stage_plan)} | country={country} | date={stage_date} | under10={stage_under10}"
+        print_lg(stage_label)
+        stage_total = apply_to_jobs(
+            search_terms,
+            per_term_cap=stage_cap,
+            force_under_10=stage_under10,
+            date_posted_override=stage_date,
+            search_location_override=country,
+            location_override=[country],
+            stage_label=stage_label,
+        )
+        print_lg(f"Completed {stage_label} | applied this stage={stage_total}")
+
     print_lg("########################################################################################################################\n")
     if run_non_stop and not dailyEasyApplyLimitReached:
         print_lg("Sleeping for 10 min...")

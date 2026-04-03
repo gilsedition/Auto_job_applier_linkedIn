@@ -153,21 +153,36 @@ def company_search_click(driver: WebDriver, actions: ActionChains, companyName: 
     actions.send_keys(Keys.ENTER).perform()
     print_lg(f'Tried searching and adding "{companyName}"')
 
-def location_search_click(driver: WebDriver, actions: ActionChains, locationName: str) -> None:
+def location_search_click(driver: WebDriver, actions: ActionChains, locationName: str) -> bool:
     '''
     Tries to search and Add the location to location filters list.
     '''
     try:
+        # LinkedIn varies this label by locale/version (e.g. "Add a location", "Search locations").
         wait_span_click(driver, "Add a location", 1)
-        search = driver.find_element(By.XPATH, "(.//input[@placeholder='Add a location'])[1]")
+        if not try_xp(driver, "(.//input[@placeholder='Add a location'])[1]", False):
+            wait_span_click(driver, "Search locations", 1)
+
+        search = try_xp(driver, "(.//input[@placeholder='Add a location'])[1]", False)
+        if not search:
+            search = try_xp(driver, "(.//input[@placeholder='Search locations'])[1]", False)
+        if not search:
+            search = try_xp(driver, "(.//input[contains(@aria-label,'location')])[1]", False)
+        if not search:
+            search = try_xp(driver, "(.//input[contains(@aria-label,'Location')])[1]", False)
+        if not search:
+            raise ValueError("Location search input not found")
+
         search.send_keys(Keys.CONTROL + "a")
         search.send_keys(locationName)
         buffer(3)
         actions.send_keys(Keys.DOWN).perform()
         actions.send_keys(Keys.ENTER).perform()
         print_lg(f'Tried searching and adding location "{locationName}"')
+        return True
     except Exception:
         print_lg(f'Click Failed! Didn\'t find location "{locationName}"')
+        return False
 
 def text_input(actions: ActionChains, textInputEle: WebElement | bool, value: str, textFieldName: str = "Text") -> None | Exception:
     if textInputEle:

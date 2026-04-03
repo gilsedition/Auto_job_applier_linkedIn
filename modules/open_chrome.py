@@ -31,9 +31,24 @@ from selenium.webdriver.support.ui import WebDriverWait
 from modules.helpers import find_default_profile_directory, print_lg, find_profile_folder_by_name
 from selenium.common.exceptions import SessionNotCreatedException
 
-def get_isolated_temp_profile() -> str:
-    base_dir = get_default_temp_profile()
-    return os.path.join(base_dir, f"session-{int(time.time())}-{os.getpid()}")
+def normalize_user_data_dir(profile_dir: str | None) -> str:
+    if not profile_dir:
+        return ""
+    normalized = profile_dir.strip().strip('"')
+    prefix = "--user-data-dir="
+    if normalized.lower().startswith(prefix):
+        normalized = normalized[len(prefix):]
+    return os.path.normpath(normalized)
+
+
+def get_recovery_profile_dir() -> str:
+    if bot_profile_dir:
+        return normalize_user_data_dir(bot_profile_dir)
+    if not safe_mode:
+        profile_dir = find_default_profile_directory()
+        if profile_dir:
+            return normalize_user_data_dir(profile_dir)
+    return normalize_user_data_dir(get_default_temp_profile())
 
 
 def close_conflicting_chrome_sessions(profile_dir: str) -> None:
@@ -90,7 +105,7 @@ def createChromeSession(isRetry: bool = False, retry_profile_dir: str | None = N
     print_lg("IF YOU HAVE MORE THAN 10 TABS OPENED, PLEASE CLOSE OR BOOKMARK THEM! Or it's highly likely that application will just open browser and not do anything!")
     if isRetry:
         print_lg("Will login with a guest profile, browsing history will not be saved in the browser!")
-        retry_profile = retry_profile_dir or get_default_temp_profile()
+        retry_profile = normalize_user_data_dir(retry_profile_dir) or normalize_user_data_dir(get_default_temp_profile())
         make_directories([retry_profile])
         print_lg(f'Using isolated retry profile directory: "{retry_profile}"')
         options.add_argument(f"--user-data-dir={retry_profile}")
@@ -113,10 +128,10 @@ def createChromeSession(isRetry: bool = False, retry_profile_dir: str | None = N
                 options.add_argument(f"--user-data-dir={profile_dir}")
         else:
             print_lg("Logging in with a guest profile, Web history will not be saved!")
-            options.add_argument(f"--user-data-dir={get_default_temp_profile()}")
+            options.add_argument(f"--user-data-dir={normalize_user_data_dir(get_default_temp_profile())}")
     else:
         print_lg("Logging in with a guest profile, Web history will not be saved!")
-        options.add_argument(f"--user-data-dir={get_default_temp_profile()}")
+        options.add_argument(f"--user-data-dir={normalize_user_data_dir(get_default_temp_profile())}")
     if stealth_mode:
         # try: 
         #     driver = uc.Chrome(driver_executable_path="C:\\Program Files\\Google\\Chrome\\chromedriver-win64\\chromedriver.exe", options=options)
@@ -135,24 +150,27 @@ options, driver, actions, wait = None, None, None, None
 try:
     options, driver, actions, wait = createChromeSession()
 except SessionNotCreatedException as e:
-    critical_error_log("Failed to create Chrome Session, retrying with guest profile", e)
+    critical_error_log("Failed to create Chrome Session", e)
     session_started = False
+    retry_error = None
+    max_retry_attempts = 3
+    recovery_profile_dir = get_recovery_profile_dir()
 
-    if auto_close_conflicting_chrome and bot_profile_dir:
-        close_conflicting_chrome_sessions(bot_profile_dir)
+    for attempt in range(1, max_retry_attempts + 1):
+        if auto_close_conflicting_chrome and recovery_profile_dir:
+            close_conflicting_chrome_sessions(recovery_profile_dir)
         try:
-            print_lg("Retrying Chrome session with dedicated bot profile after closing conflicts...")
+            print_lg(f"Retrying Chrome session with same profile (attempt {attempt}/{max_retry_attempts})...")
             options, driver, actions, wait = createChromeSession()
             session_started = True
-        except SessionNotCreatedException as post_close_error:
-            critical_error_log("Retry with dedicated profile after auto-close failed", post_close_error)
+            break
+        except SessionNotCreatedException as retry_exception:
+            retry_error = retry_exception
+            critical_error_log(f"Retry with same profile failed (attempt {attempt}/{max_retry_attempts})", retry_exception)
+            time.sleep(1)
 
-    if not session_started:
-        try:
-            options, driver, actions, wait = createChromeSession(True, get_isolated_temp_profile())
-        except SessionNotCreatedException as retry_error:
-            critical_error_log("Retry with isolated guest profile failed", retry_error)
-            raise
+    if not session_started and retry_error:
+        raise retry_error
 except Exception as e:
     msg = 'Seems like Google Chrome is out dated. Update browser and try again! \n\n\nIf issue persists, try Safe Mode. Set, safe_mode = True in config.py \n\nPlease check GitHub discussions/support for solutions https://github.com/GodsScion/Auto_job_applier_linkedIn \n                                   OR \nReach out in discord ( https://discord.gg/fFp7uUzWCY )'
     if isinstance(e, TimeoutError): msg = "Couldn't download Chrome-driver. Set stealth_mode = False in config!"
