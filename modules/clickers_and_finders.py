@@ -158,26 +158,48 @@ def location_search_click(driver: WebDriver, actions: ActionChains, locationName
     Tries to search and Add the location to location filters list.
     '''
     try:
-        # LinkedIn varies this label by locale/version (e.g. "Add a location", "Search locations").
-        wait_span_click(driver, "Add a location", 1)
-        if not try_xp(driver, "(.//input[@placeholder='Add a location'])[1]", False):
-            wait_span_click(driver, "Search locations", 1)
+        # LinkedIn varies this label by locale/version.
+        for trigger_label in ["Add a location", "Search locations", "Ajouter un lieu", "Rechercher des lieux"]:
+            wait_span_click(driver, trigger_label, 1)
 
         search = try_xp(driver, "(.//input[@placeholder='Add a location'])[1]", False)
         if not search:
             search = try_xp(driver, "(.//input[@placeholder='Search locations'])[1]", False)
         if not search:
-            search = try_xp(driver, "(.//input[contains(@aria-label,'location')])[1]", False)
+            search = try_xp(driver, "(.//input[contains(translate(@placeholder, 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'location')])[1]", False)
         if not search:
-            search = try_xp(driver, "(.//input[contains(@aria-label,'Location')])[1]", False)
+            search = try_xp(driver, "(.//input[contains(translate(@aria-label, 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'location')])[1]", False)
+        if not search:
+            search = try_xp(driver, "(.//input[contains(translate(@aria-label, 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'lieu')])[1]", False)
         if not search:
             raise ValueError("Location search input not found")
 
         search.send_keys(Keys.CONTROL + "a")
         search.send_keys(locationName)
-        buffer(3)
-        actions.send_keys(Keys.DOWN).perform()
-        actions.send_keys(Keys.ENTER).perform()
+        buffer(2)
+
+        clicked_suggestion = False
+        suggestion_xpaths = [
+            "(.//div[@role='option' and not(@aria-disabled='true')])[1]",
+            "(.//li[contains(@id, 'typeahead') or contains(@class, 'typeahead')])[1]",
+            "(.//li[contains(@class, 'search-typeahead-v2__hit')])[1]",
+        ]
+        for xpath in suggestion_xpaths:
+            suggestion = try_xp(driver, xpath, False)
+            if not suggestion:
+                continue
+            try:
+                scroll_to_view(driver, suggestion)
+                suggestion.click()
+                clicked_suggestion = True
+                break
+            except Exception:
+                continue
+
+        if not clicked_suggestion:
+            actions.send_keys(Keys.DOWN).perform()
+            actions.send_keys(Keys.ENTER).perform()
+
         print_lg(f'Tried searching and adding location "{locationName}"')
         return True
     except Exception:

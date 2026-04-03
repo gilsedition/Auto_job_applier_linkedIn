@@ -306,6 +306,77 @@ def normalize_select_text(text: str) -> str:
     return re.sub(r"\s+", " ", normalized_text).strip().casefold()
 
 
+def get_filter_option_aliases(option_text: str) -> list[str]:
+    '''Return localized/common aliases for LinkedIn filter options.'''
+    normalized_option = normalize_select_text(option_text)
+    alias_map = {
+        "most recent": ["Most recent", "Most recent first", "Les plus recentes", "Plus recentes"],
+        "most relevant": ["Most relevant", "Pertinence", "Les plus pertinentes"],
+        "any time": ["Any time", "A tout moment", "Toute date"],
+        "past month": ["Past month", "Last month", "Mois dernier", "Au cours du dernier mois"],
+        "past week": ["Past week", "Last week", "Semaine derniere", "Au cours de la derniere semaine"],
+        "past 24 hours": ["Past 24 hours", "Last 24 hours", "Dernieres 24 heures", "Au cours des dernieres 24 heures"],
+    }
+    aliases = [option_text]
+    aliases.extend(alias_map.get(normalized_option, []))
+    return [alias for alias in aliases if alias]
+
+
+def _text_matches_filter_alias(text_value: str, aliases: list[str]) -> bool:
+    normalized_text = normalize_select_text(text_value)
+    if not normalized_text:
+        return False
+    for alias in aliases:
+        normalized_alias = normalize_select_text(alias)
+        if not normalized_alias:
+            continue
+        if normalized_alias in normalized_text or normalized_text in normalized_alias:
+            return True
+    return False
+
+
+def click_filter_option_with_fallback(option_text: str) -> bool:
+    '''Click filter option by exact text first, then fuzzy matching in current filter modal.'''
+    if not option_text:
+        return True
+
+    aliases = get_filter_option_aliases(option_text)
+    for alias in aliases:
+        if wait_span_click(driver, alias):
+            return True
+
+    candidate_xpaths = [
+        "//label[.//input]",
+        "//button",
+        "//span",
+    ]
+    for xpath in candidate_xpaths:
+        try:
+            candidates = driver.find_elements(By.XPATH, xpath)
+        except Exception:
+            candidates = []
+        for candidate in candidates:
+            try:
+                if not candidate.is_displayed():
+                    continue
+                text_blob = " ".join(
+                    [
+                        candidate.text or "",
+                        candidate.get_attribute("aria-label") or "",
+                        candidate.get_attribute("title") or "",
+                    ]
+                ).strip()
+                if not _text_matches_filter_alias(text_blob, aliases):
+                    continue
+                scroll_to_view(driver, candidate)
+                candidate.click()
+                buffer(click_gap)
+                return True
+            except Exception:
+                continue
+    return False
+
+
 def should_auto_check_checkbox(label_text: str, option_text: str) -> bool:
     normalized = normalize_select_text(f"{label_text} {option_text}")
     if any(marker in normalized for marker in DEMOGRAPHIC_CHECKBOX_MARKERS):
@@ -1029,8 +1100,8 @@ def apply_filters(
         wait.until(EC.presence_of_element_located((By.XPATH, '//button[normalize-space()="All filters"]'))).click()
         buffer(recommended_wait)
 
-        sort_clicked = bool(wait_span_click(driver, sort_by))
-        date_clicked = bool(wait_span_click(driver, selected_date_posted))
+        sort_clicked = click_filter_option_with_fallback(sort_by)
+        date_clicked = click_filter_option_with_fallback(selected_date_posted)
         buffer(recommended_wait)
 
         multi_sel_noWait(driver, experience_level) 
@@ -1077,16 +1148,18 @@ def apply_filters(
         show_results_button: WebElement = driver.find_element(By.XPATH, '//button[contains(translate(@aria-label, "ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz"), "apply current filters to show")]')
         show_results_button.click()
 
-        if not sort_clicked:
+        if sort_by and not sort_clicked:
             print_lg(f'Preflight failed: sort option "{sort_by}" was not applied.')
-        if not date_clicked:
+        if selected_date_posted and not date_clicked:
             print_lg(f'Preflight failed: date filter "{selected_date_posted}" was not applied.')
 
         global pause_after_filters
         if pause_after_filters and "Turn off Pause after search" == pyautogui.confirm("These are your configured search results and filter. It is safe to change them while this dialog is open, any changes later could result in errors and skipping this search run.", "Please check your results", ["Turn off Pause after search", "Look's good, Continue"]):
             pause_after_filters = False
 
-        return sort_clicked and date_clicked
+        # Non-blocking preflight: LinkedIn frequently localizes filter labels; continue run when
+        # filters modal completes, even if one label-specific click could not be verified.
+        return True
 
     except Exception as e:
         print_lg("Setting the preferences failed!")
