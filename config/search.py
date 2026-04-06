@@ -115,7 +115,59 @@ about_company_bad_words = ["Crossover"]       # (dynamic multiple search) or lea
 about_company_good_words = []      # (dynamic multiple search) or leave empty as []. Ex: ["Robert Half", "Dice"]
 
 # Skip jobs whose TITLE contains any of these words/phrases. Checked early (before loading description), so it saves time. Case Insensitive.
-title_bad_words = ["Lead", "Team Lead", "Lead Consultant", "IT Analyst", "Systems Analyst", "Data Engineer", "Software Engineer", "Software Developer", "DevOps", "Machine Learning", "Data Science", "Cybersecurity", "Network Engineer", "Cloud Engineer"]   # or leave empty as []. Ex: ["IT Analyst", "Software Engineer"]
+title_bad_words = ["Lead", "Team Lead", "Lead Consultant", "IT Analyst", "Systems Analyst", "Data Engineer", "Software Engineer", "Software Developer", "DevOps", "Machine Learning", "Data Science", "Cybersecurity", "Network Engineer", "Cloud Engineer", "Coach", "Coaching", "Trainer", "Training", "Teacher", "Teaching", "Instructor", "Formateur", "Formatrice", "Enseignant", "Enseignante", "Mentor", "Sales", "Commercial", "Marketing", "Customer Success", "Support Engineer", "HR Manager", "Talent Acquisition", "Recruiter"]   # or leave empty as []. Ex: ["IT Analyst", "Software Engineer"]
+
+# Strict title relevance gate: if enabled, bot applies only when title matches finance/accounting intent.
+strict_title_relevance = True
+
+# Title relevance mode:
+# - "strict": skip immediately when title does not pass relevance checks
+# - "balanced": if title is uncertain, inspect job description relevance before skipping
+title_relevance_mode = "strict"
+
+# Any title containing one of these keywords is considered explicitly in-scope.
+# Keep this list focused on your target domains to prevent unrelated applications.
+title_allow_words = [
+    "finance",
+    "financial",
+    "accounting",
+    "accounts payable",
+    "accounts receivable",
+    "billing",
+    "invoice",
+    "treasury",
+    "credit controller",
+    "ledger",
+    "business analyst trade finance",
+    "front office functional analyst",
+    "capital market",
+    "cash management",
+    "alm treasury",
+    "comptable",
+    "analyste financier",
+    "analyste facturation",
+]
+
+# Second-stage relevance words for balanced mode. If title is uncertain, at least one keyword
+# should appear in the job description to keep processing the role.
+description_allow_words = [
+    "finance",
+    "financial",
+    "fp&a",
+    "fpa",
+    "accounting",
+    "accounts payable",
+    "accounts receivable",
+    "billing",
+    "invoice",
+    "treasury",
+    "cash management",
+    "controlling",
+    "controller",
+    "comptabilite",
+    "comptable",
+    "analyste financier",
+]
 
 # Minimum LinkedIn skills match percentage required to apply. Uses LinkedIn's own "X of Y skills match" indicator on the job detail panel.
 # Set to 0 or -1 to disable. Requires your skills to be filled in on your LinkedIn profile.

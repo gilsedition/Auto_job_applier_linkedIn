@@ -86,7 +86,9 @@ def validate_questions() -> None | ValueError | TypeError:
     __validation_file_path = "config/questions.py"
 
     check_string(default_resume_path, "default_resume_path")
+    check_list(preferred_regions, "preferred_regions")
     check_string(years_of_experience, "years_of_experience")
+    check_list(completed_education_levels, "completed_education_levels")
     check_string(require_visa_default, "require_visa_default", ["Yes", "No"])
     check_string(website, "website")
     check_string(linkedIn, "linkedIn")
@@ -147,6 +149,12 @@ def validate_search() -> None | ValueError | TypeError:
     check_list(about_company_bad_words, "about_company_bad_words")
     check_list(about_company_good_words, "about_company_good_words")
     check_list(title_bad_words, "title_bad_words")
+    check_boolean(strict_title_relevance, "strict_title_relevance")
+    check_string(title_relevance_mode, "title_relevance_mode", ["strict", "balanced"])
+    check_list(title_allow_words, "title_allow_words")
+    check_list(description_allow_words, "description_allow_words")
+    if strict_title_relevance and len(title_allow_words) == 0:
+        raise ValueError('The variable "title_allow_words" in "config/search.py" must contain at least one keyword when "strict_title_relevance" is True!')
     check_list(bad_words, "bad_words")
     check_boolean(security_clearance, "security_clearance")
     check_boolean(did_masters, "did_masters")

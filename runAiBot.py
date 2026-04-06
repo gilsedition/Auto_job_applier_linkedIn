@@ -84,7 +84,7 @@ skip_count = 0
 dailyEasyApplyLimitReached = False
 
 re_experience = re.compile(
-    r"[(]?\s*\+?\s*(\d{1,2})\s*[)]?\s*(?:[-–toaà]\s*\d{1,2}\+?\s*)?(?:\+?\s*)?(?:year|years|yr|yrs|an|ans|annee|annees)\b",
+    r"[(]?\s*\+?\s*(\d{1,2})\s*[)]?\s*(?:(?:-|–|to|a|à)\s*\d{1,2}\+?\s*)?(?:\+?\s*)?(?:year|years|yr|yrs|an|ans|annee|annees)\b",
     re.IGNORECASE,
 )
 
@@ -218,6 +218,38 @@ KNOWN_LANGUAGE_MARKERS = ENGLISH_LANGUAGE_MARKERS | FRENCH_LANGUAGE_MARKERS | {
     "flemish",
     "arabic",
     "arabe",
+}
+EDUCATION_LEVEL_ALIASES = {
+    "doctorate": (
+        "doctor of philosophy",
+        "phd",
+        "ph.d",
+        "doctorate",
+        "doctoral",
+        "dphil",
+        "doctor",
+    ),
+    "master": (
+        "master",
+        "masters",
+        "msc",
+        "m.sc",
+        "ma",
+        "m.a",
+        "mba",
+        "mcom",
+        "m.com",
+    ),
+    "bachelor": (
+        "bachelor",
+        "bachelors",
+        "bsc",
+        "b.sc",
+        "ba",
+        "b.a",
+        "bcom",
+        "b.com",
+    ),
 }
 EMAIL_LABEL_MARKERS = {
     "email",
@@ -377,11 +409,71 @@ def click_filter_option_with_fallback(option_text: str) -> bool:
     return False
 
 
+def click_show_results_button() -> bool:
+    '''Click LinkedIn filter modal confirm button across locale/UI variants.'''
+    xpaths = [
+        '//button[contains(translate(@aria-label, "ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz"), "apply current filters to show")]',
+        '//button[contains(translate(@aria-label, "ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz"), "show results")]',
+        '//button[contains(translate(@aria-label, "ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz"), "see results")]',
+        '//button[contains(translate(@aria-label, "ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz"), "afficher")]',
+        '//button[contains(translate(normalize-space(.), "ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz"), "show results")]',
+        '//button[contains(translate(normalize-space(.), "ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz"), "see results")]',
+        '//button[contains(translate(normalize-space(.), "ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz"), "afficher les resultats")]',
+    ]
+
+    for xp in xpaths:
+        try:
+            for button in driver.find_elements(By.XPATH, xp):
+                if not button.is_displayed() or not button.is_enabled():
+                    continue
+                scroll_to_view(driver, button)
+                button.click()
+                buffer(click_gap)
+                return True
+        except Exception:
+            continue
+
+    # Last fallback: pick primary action button in visible modal footer.
+    try:
+        modal_buttons = driver.find_elements(By.XPATH, '//div[@role="dialog"]//button[contains(@class,"artdeco-button--primary")]')
+        for button in modal_buttons:
+            if button.is_displayed() and button.is_enabled():
+                scroll_to_view(driver, button)
+                button.click()
+                buffer(click_gap)
+                return True
+    except Exception:
+        pass
+
+    return False
+
+
 def should_auto_check_checkbox(label_text: str, option_text: str) -> bool:
     normalized = normalize_select_text(f"{label_text} {option_text}")
     if any(marker in normalized for marker in DEMOGRAPHIC_CHECKBOX_MARKERS):
         return False
     return any(marker in normalized for marker in CONSENT_CHECKBOX_MARKERS)
+
+
+_REGION_QUESTION_MARKERS = {
+    "region", "regions", "région", "régions", "quelle",
+    "prefecture", "prefecture",
+}
+
+
+def matches_preferred_region(label_text: str, option_text: str) -> bool:
+    '''Return True when this checkbox option is in the user-configured preferred_regions list.
+    Detects region questions by matching label markers, then compares the option text.
+    '''
+    label_norm = normalize_select_text(label_text)
+    if not any(marker in label_norm for marker in _REGION_QUESTION_MARKERS):
+        return False
+    option_norm = normalize_select_text(option_text)
+    for pref in globals().get("preferred_regions", []):
+        pref_norm = normalize_select_text(str(pref))
+        if pref_norm and (pref_norm in option_norm or option_norm in pref_norm):
+            return True
+    return False
 
 
 def detect_daily_easy_apply_limit(context: str = "") -> bool:
@@ -390,17 +482,26 @@ def detect_daily_easy_apply_limit(context: str = "") -> bool:
         return True
 
     alert_xpaths = [
+        "//div[contains(@class,'artdeco-inline-feedback--error') and @role='alert']//span[contains(@class,'artdeco-inline-feedback__message')]",
         "//div[contains(@class,'artdeco-inline-feedback') and (@role='alert' or contains(@class,'artdeco-inline-feedback--error'))]",
         "//div[contains(@class,'artdeco-inline-feedback__message') and ancestor::div[contains(@class,'artdeco-inline-feedback')]]",
+        "//div[@role='dialog']",
+        "//div[contains(@class,'artdeco-modal')]",
+        "//section[contains(@class,'jobs-easy-apply-content')]",
+        "//body",
     ]
     try:
         messages: list[str] = []
         for xp in alert_xpaths:
             for element in driver.find_elements(By.XPATH, xp):
                 try:
-                    text = (element.text or "").strip()
+                    text = (
+                        (element.get_attribute("textContent") or "")
+                        or (element.text or "")
+                    ).strip()
                     if text:
-                        messages.append(text)
+                        # Keep scanning light while preserving full banner phrases.
+                        messages.append(text[:6000])
                 except Exception:
                     continue
 
@@ -573,6 +674,44 @@ def extract_experience_threshold(label: str) -> tuple[int, bool] | None:
     return threshold, is_strict
 
 
+def detect_education_level(text_value: str) -> str | None:
+    normalized_text = normalize_select_text(text_value)
+    if not normalized_text:
+        return None
+
+    for level_name, aliases in EDUCATION_LEVEL_ALIASES.items():
+        if any(normalize_select_text(alias) in normalized_text for alias in aliases):
+            return level_name
+    return None
+
+
+def get_education_completion_answer(label_text: str) -> str | None:
+    normalized_label = normalize_select_text(label_text)
+    if not normalized_label:
+        return None
+
+    if not any(marker in normalized_label for marker in ("education", "degree", "qualification")):
+        return None
+    if not any(marker in normalized_label for marker in ("completed", "complete", "obtained", "attained")):
+        return None
+
+    asked_level = detect_education_level(normalized_label)
+    if not asked_level:
+        return None
+
+    configured_levels = globals().get("completed_education_levels", []) or []
+    completed_levels = {
+        detected
+        for level in configured_levels
+        for detected in [detect_education_level(str(level))]
+        if detected
+    }
+    if not completed_levels:
+        return None
+
+    return "Yes" if asked_level in completed_levels else "No"
+
+
 def should_force_binary_answer(label: str) -> bool:
     normalized_label = normalize_select_text(label)
     if extract_experience_threshold(normalized_label) and any(term in normalized_label for term in ["experience", "experiencia"]):
@@ -670,6 +809,42 @@ def close_easy_apply_modal_if_open() -> bool:
         return not is_easy_apply_modal_open()
     except Exception:
         return False
+
+
+def dismiss_job_search_safety_reminder(context: str = "") -> bool:
+    '''Dismiss LinkedIn safety reminder popup by clicking "Continue applying" when present.'''
+    try:
+        dialogs = driver.find_elements(By.XPATH, "//div[@role='dialog']")
+    except Exception:
+        dialogs = []
+
+    for dialog in dialogs:
+        try:
+            if not dialog.is_displayed():
+                continue
+            dialog_text = normalize_select_text(dialog.get_attribute("textContent") or dialog.text or "")
+            if "job search safety reminder" not in dialog_text and "report suspicious jobs" not in dialog_text:
+                continue
+
+            continue_xpaths = [
+                ".//button[contains(translate(normalize-space(.), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'continue applying')]",
+                ".//button[.//span[contains(translate(normalize-space(.), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'continue applying')]]",
+                ".//button[contains(translate(normalize-space(.), 'ABCDEFGHIJKLMNOPQRSTUVWXYZ', 'abcdefghijklmnopqrstuvwxyz'), 'continue')]",
+            ]
+            for xp in continue_xpaths:
+                buttons = dialog.find_elements(By.XPATH, xp)
+                for button in buttons:
+                    if not button.is_displayed() or not button.is_enabled():
+                        continue
+                    scroll_to_view(driver, button)
+                    button.click()
+                    buffer(click_gap)
+                    prefix = f"[{context}] " if context else ""
+                    print_lg(prefix + 'Dismissed Job search safety reminder via "Continue applying".')
+                    return True
+        except Exception:
+            continue
+    return False
 
 
 def get_selected_option_text(question: WebElement, fallback: str = "", strict: bool = False) -> str:
@@ -1065,6 +1240,11 @@ def set_search_location(search_location_override: str | None = None) -> None:
         try:
             print_lg(f'Setting search location as: "{target_search_location}"')
             search_location_ele = try_xp(driver, ".//input[@aria-label='City, state, or zip code'and not(@disabled)]", False) #  and not(@aria-hidden='true')]")
+            if search_location_ele:
+                current_value = (search_location_ele.get_attribute("value") or "").strip()
+                if normalize_select_text(current_value) == normalize_select_text(target_search_location):
+                    print_lg(f'Search location already set to "{target_search_location}"; skipping re-entry.')
+                    return
             text_input(actions, search_location_ele, target_search_location, "Search Location")
         except ElementNotInteractableException:
             try_xp(driver, ".//label[@class='jobs-search-box__input-icon jobs-search-box__keywords-label']")
@@ -1145,8 +1325,10 @@ def apply_filters(
         multi_sel_noWait(driver, commitments)
         if benefits or commitments: buffer(recommended_wait)
 
-        show_results_button: WebElement = driver.find_element(By.XPATH, '//button[contains(translate(@aria-label, "ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz"), "apply current filters to show")]')
-        show_results_button.click()
+        if not click_show_results_button():
+            print_lg('Preflight failed: could not find/click "Show results" button in filters modal.')
+            actions.send_keys(Keys.ESCAPE).perform()
+            return False
 
         if sort_by and not sort_clicked:
             print_lg(f'Preflight failed: sort option "{sort_by}" was not applied.')
@@ -1162,9 +1344,7 @@ def apply_filters(
         return True
 
     except Exception as e:
-        print_lg("Setting the preferences failed!")
-        pyautogui.confirm(f"Faced error while applying filters. Please make sure correct filters are selected, click on show results and click on any button of this dialog. ERROR: {e}", "Filter Error", ["Doesn't look good, but Continue", "Look's good, Continue"])
-        # print_lg(e)
+        print_lg("Setting the preferences failed!", e)
         return False
 
 
@@ -1266,8 +1446,160 @@ def has_no_matching_jobs_banner() -> bool:
     return False
 
 
+def has_suggested_jobs_context() -> bool:
+    '''Detect suggested/recommended job contexts that appear when search has no real matches.'''
+    markers = [
+        "suggested jobs",
+        "suggested searches",
+        "based on your profile",
+        "jobs you may be interested in",
+        "recommended jobs",
+        "emplois suggeres",
+        "offres suggerees",
+        "recommande",
+        "recommandes",
+    ]
+    container_xpaths = [
+        "//div[contains(@class, 'jobs-search-results-list')]",
+        "//div[contains(@class, 'jobs-search-two-pane')]",
+        "//main",
+    ]
 
-def get_job_main_details(job: WebElement, blacklisted_companies: set, rejected_jobs: set) -> tuple[str, str, str, str, str, bool]:
+    for selector in container_xpaths:
+        try:
+            containers = driver.find_elements(By.XPATH, selector)
+        except Exception:
+            containers = []
+        for container in containers[:2]:
+            try:
+                if not container.is_displayed():
+                    continue
+                text_blob = normalize_select_text((container.text or "")[:5000])
+                if any(marker in text_blob for marker in markers):
+                    return True
+            except Exception:
+                continue
+    return False
+
+
+def looks_like_suggested_results_for_term(job_listings: list[WebElement], search_term: str) -> bool:
+    '''If first visible cards are unrelated to the search term, treat this as suggested results mode.'''
+    term_tokens = {
+        token
+        for token in re.findall(r"[a-z]+", normalize_select_text(search_term))
+        if len(token) >= 4 and token not in {"with", "from", "dans", "pour", "avec", "specialist"}
+    }
+    if not term_tokens:
+        return False
+
+    checked = 0
+    matches = 0
+    for job in job_listings[:6]:
+        try:
+            title_text = normalize_select_text(job.find_element(By.TAG_NAME, "a").text or "")
+        except Exception:
+            continue
+        if not title_text:
+            continue
+        checked += 1
+        title_tokens = set(re.findall(r"[a-z]+", title_text))
+        if term_tokens & title_tokens:
+            matches += 1
+
+    if checked >= 3 and matches == 0:
+        return True
+    return False
+
+
+STRONG_ROLE_TOKENS = {
+    "finance",
+    "financial",
+    "accounting",
+    "billing",
+    "invoice",
+    "treasury",
+    "payable",
+    "receivable",
+    "credit",
+    "ledger",
+    "comptable",
+    "facturation",
+    "analyste",
+}
+WEAK_ROLE_STOPWORDS = {
+    "and",
+    "with",
+    "from",
+    "for",
+    "the",
+    "senior",
+    "junior",
+    "specialist",
+    "associate",
+    "analyst",
+    "h",
+    "f",
+}
+
+
+def _tokenize_title_intent(text: str) -> set[str]:
+    return {
+        token
+        for token in re.findall(r"[a-z]+", normalize_select_text(text))
+        if len(token) >= 3 and token not in WEAK_ROLE_STOPWORDS
+    }
+
+
+def is_title_relevant(title: str, search_term: str) -> bool:
+    if not bool(globals().get("strict_title_relevance", False)):
+        return True
+
+    title_norm = normalize_select_text(title)
+    if not title_norm:
+        return False
+
+    allow_words = globals().get("title_allow_words", [])
+    for keyword in allow_words:
+        if normalize_select_text(str(keyword)) in title_norm:
+            return True
+
+    title_tokens = _tokenize_title_intent(title)
+    search_tokens = _tokenize_title_intent(search_term)
+    if not title_tokens:
+        return False
+
+    overlap = title_tokens & search_tokens
+    if overlap & STRONG_ROLE_TOKENS:
+        return True
+
+    # Fallback: allow when at least two intent tokens overlap (excluding generic words).
+    return len(overlap) >= 2
+
+
+def is_description_relevant(description: str, title: str, search_term: str) -> bool:
+    '''Second-stage relevance check used in balanced mode for uncertain titles.'''
+    if not description:
+        return False
+
+    combined_text = normalize_select_text(f"{title} {description}")
+    if not combined_text:
+        return False
+
+    for keyword in globals().get("description_allow_words", []):
+        keyword_norm = normalize_select_text(str(keyword))
+        if keyword_norm and keyword_norm in combined_text:
+            return True
+
+    combined_tokens = _tokenize_title_intent(combined_text)
+    search_tokens = _tokenize_title_intent(search_term)
+    overlap = combined_tokens & search_tokens
+    if overlap & STRONG_ROLE_TOKENS:
+        return True
+    return len(overlap) >= 2
+
+
+
+def get_job_main_details(job: WebElement, blacklisted_companies: set, rejected_jobs: set, search_term: str) -> tuple[str, str, str, str, str, bool, bool]:
     '''
     # Function to get job main details.
     Returns a tuple of (job_id, title, company, work_location, work_style, skip)
@@ -1279,26 +1611,54 @@ def get_job_main_details(job: WebElement, blacklisted_companies: set, rejected_j
     * skip: A boolean flag to skip this job
     '''
     skip = False
-    job_details_button = job.find_element(By.TAG_NAME, 'a')  # job.find_element(By.CLASS_NAME, "job-card-list__title")  # Problem in India
-    scroll_to_view(driver, job_details_button, True)
-    job_id = job.get_dom_attribute('data-occludable-job-id')
-    title = job_details_button.text
-    title = title[:title.find("\n")]
-    # company = job.find_element(By.CLASS_NAME, "job-card-container__primary-description").text
-    # work_location = job.find_element(By.CLASS_NAME, "job-card-container__metadata-item").text
-    other_details = job.find_element(By.CLASS_NAME, 'artdeco-entity-lockup__subtitle').text
-    index = other_details.find(' · ')
-    company = other_details[:index]
-    work_location = other_details[index+3:]
-    work_style = work_location[work_location.rfind('(')+1:work_location.rfind(')')]
-    work_location = work_location[:work_location.rfind('(')].strip()
+    needs_description_relevance_check = False
+    job_id = job.get_dom_attribute('data-occludable-job-id') or "Unknown"
+    title = "Unknown"
+    company = "Unknown"
+    work_location = "Unknown"
+    work_style = "Unknown"
+
+    try:
+        job_details_button = job.find_element(By.TAG_NAME, 'a')  # job.find_element(By.CLASS_NAME, "job-card-list__title")  # Problem in India
+        scroll_to_view(driver, job_details_button, True)
+        title = job_details_button.text
+        title = title[:title.find("\n")] if "\n" in title else title
+    except Exception as e:
+        print_lg(f'Skipping malformed/expired job card (missing title link). Job ID: {job_id}!', e)
+        return (job_id, title, company, work_location, work_style, True, False)
+
+    try:
+        # company = job.find_element(By.CLASS_NAME, "job-card-container__primary-description").text
+        # work_location = job.find_element(By.CLASS_NAME, "job-card-container__metadata-item").text
+        other_details = job.find_element(By.CLASS_NAME, 'artdeco-entity-lockup__subtitle').text
+        index = other_details.find(' · ')
+        if index != -1:
+            company = other_details[:index]
+            work_location = other_details[index+3:]
+        else:
+            company = other_details
+            work_location = "Unknown"
+        if "(" in work_location and ")" in work_location:
+            work_style = work_location[work_location.rfind('(')+1:work_location.rfind(')')]
+            work_location = work_location[:work_location.rfind('(')].strip()
+    except Exception:
+        # Some cards omit subtitle metadata; keep defaults and continue with title-based screening.
+        pass
     
     # Skip if previously rejected due to blacklist or already applied
     title_low = title.lower()
     title_norm = normalize_select_text(title)
+    if not is_title_relevant(title, search_term):
+        mode = str(globals().get("title_relevance_mode", "strict")).strip().lower()
+        if mode == "balanced":
+            needs_description_relevance_check = True
+            print_lg(f'Flagging "{title} | {company}" for balanced relevance check (title uncertain, search_term="{search_term}"). Job ID: {job_id}!')
+        else:
+            print_lg(f'Skipping "{title} | {company}" job (skip_reason=title_not_relevant, search_term="{search_term}"). Job ID: {job_id}!')
+            skip = True
     for word in title_bad_words:
         if word.lower() in title_low:
-            print_lg(f'Skipping "{title} | {company}" job (Bad word "{word}" in title). Job ID: {job_id}!')
+            print_lg(f'Skipping "{title} | {company}" job (skip_reason=title_bad_word, bad_word="{word}"). Job ID: {job_id}!')
             skip = True
             break
     if not skip and re.search(r"\blead\b", title_norm):
@@ -1322,7 +1682,7 @@ def get_job_main_details(job: WebElement, blacklisted_companies: set, rejected_j
         discard_job()
         job_details_button.click()
     buffer(click_gap)
-    return (job_id,title,company,work_location,work_style,skip)
+    return (job_id,title,company,work_location,work_style,skip,needs_description_relevance_check)
 
 
 # Function to check for Blacklisted words in About Company
@@ -1368,7 +1728,11 @@ def get_linkedin_skills_match() -> tuple[int, int] | None:
 # Function to extract years of experience required from About Job
 def extract_years_of_experience(text: str) -> int:
     # Extract all patterns like '10+ years', '5 years', '3-5 years', etc.
-    normalized_text = normalize_select_text(text)
+    # Preserve range separators before ASCII normalization so "3–6 years" does not become "36 years".
+    normalized_text = unicodedata.normalize("NFKD", text or "")
+    normalized_text = normalized_text.replace("–", "-").replace("—", "-").replace("−", "-")
+    normalized_text = normalized_text.encode("ascii", "ignore").decode("ascii")
+    normalized_text = re.sub(r"\s+", " ", normalized_text).strip().casefold()
     matches = re.findall(re_experience, normalized_text)
     if len(matches) == 0: 
         print_lg("Couldn't find experience requirement in About the Job!")
@@ -1463,7 +1827,10 @@ def answer_common_questions(label: str, answer: str, work_location: str) -> str:
     normalized_label = normalize_select_text(label)
     experience_threshold = extract_experience_threshold(normalized_label)
     skill_specific_experience = get_skill_specific_experience_answer(normalized_label)
-    if 'sponsorship' in normalized_label or 'visa' in normalized_label:
+    education_completion_answer = get_education_completion_answer(normalized_label)
+    if education_completion_answer is not None:
+        answer = education_completion_answer
+    elif 'sponsorship' in normalized_label or 'visa' in normalized_label:
         answer = get_visa_answer(work_location)
     elif any(phrase in normalized_label for phrase in ['living in', 'based in', 'reside in', 'residing in', 'located in', 'authorized to work in', 'allowed to work in', 'right to work in', 'permission to work in', 'eligible to work in', 'currently in', 'live in']):
         answer = get_work_authorization_answer(normalized_label, work_location)
@@ -1945,9 +2312,15 @@ def answer_questions(modal: WebElement, questions_list: list[QuestionEntry], wor
                     try:
                         actions.move_to_element(checkbox).click().perform()
                         checked = True
-                    except Exception as e: 
+                    except Exception as e:
                         print_lg("Checkbox click failed!", e)
-                        pass
+                elif matches_preferred_region(label_org, answer):
+                    try:
+                        actions.move_to_element(checkbox).click().perform()
+                        checked = True
+                        print_lg(f'Auto-selected preferred region "{answer}" for "{label_org}"')
+                    except Exception as e:
+                        print_lg(f'Region checkbox click failed for "{answer}"!', e)
                 else:
                     ai_checked = False
                     if use_AI and aiClient and not any(marker in normalize_select_text(f"{label_org} {answer}") for marker in DEMOGRAPHIC_CHECKBOX_MARKERS):
@@ -2170,16 +2543,72 @@ def follow_company(modal: WebDriver = driver) -> None:
 
 
 #< Failed attempts logging
-def failed_job(job_id: str, job_link: str, resume: str, date_listed, error: str, exception: Exception, application_link: str, screenshot_name: str) -> None:
+def failed_job(
+    job_id: str,
+    job_link: str,
+    resume: str,
+    date_listed,
+    error: str,
+    exception: Exception,
+    application_link: str,
+    screenshot_name: str,
+    full_job_description: str | None = None,
+) -> None:
     '''
     Function to update failed jobs list in excel
     '''
     try:
+        fieldnames = ['Job ID', 'Job Link', 'Resume Tried', 'Date listed', 'Date Tried', 'Assumed Reason', 'Stack Trace', 'External Job link', 'Screenshot Name', 'Full Job Description']
+        legacy_fieldnames = ['Job ID', 'Job Link', 'Resume Tried', 'Date listed', 'Date Tried', 'Assumed Reason', 'Stack Trace', 'External Job link', 'Screenshot Name']
+
+        # One-time schema repair for failed history file to avoid shifted columns.
+        if os.path.exists(failed_file_name):
+            try:
+                with open(failed_file_name, mode='r', newline='', encoding='utf-8') as existing_csv:
+                    rows = list(csv.reader(existing_csv))
+                if rows:
+                    header = rows[0]
+                    if header != fieldnames:
+                        migrated_rows: list[list[str]] = [fieldnames]
+                        if header == legacy_fieldnames:
+                            for row in rows[1:]:
+                                if len(row) == len(legacy_fieldnames):
+                                    row = row + [""]
+                                elif len(row) < len(fieldnames):
+                                    row = row + [""] * (len(fieldnames) - len(row))
+                                elif len(row) > len(fieldnames):
+                                    row = row[:len(fieldnames)]
+                                migrated_rows.append(row)
+                        else:
+                            for row in rows[1:]:
+                                if len(row) < len(fieldnames):
+                                    row = row + [""] * (len(fieldnames) - len(row))
+                                elif len(row) > len(fieldnames):
+                                    row = row[:len(fieldnames)]
+                                migrated_rows.append(row)
+
+                        with open(failed_file_name, mode='w', newline='', encoding='utf-8') as migrated_csv:
+                            writer = csv.writer(migrated_csv)
+                            writer.writerows(migrated_rows)
+                        print_lg('Migrated failed jobs CSV schema to include "Full Job Description" column.')
+            except Exception as migration_error:
+                print_lg("Failed jobs CSV schema migration skipped due to error.", migration_error)
+
         with open(failed_file_name, 'a', newline='', encoding='utf-8') as file:
-            fieldnames = ['Job ID', 'Job Link', 'Resume Tried', 'Date listed', 'Date Tried', 'Assumed Reason', 'Stack Trace', 'External Job link', 'Screenshot Name']
             writer = csv.DictWriter(file, fieldnames=fieldnames)
             if file.tell() == 0: writer.writeheader()
-            writer.writerow({'Job ID':truncate_for_csv(job_id), 'Job Link':truncate_for_csv(job_link), 'Resume Tried':truncate_for_csv(resume), 'Date listed':fmt_date(date_listed), 'Date Tried':fmt_datetime(datetime.now()), 'Assumed Reason':truncate_for_csv(error), 'Stack Trace':truncate_for_csv(exception), 'External Job link':truncate_for_csv(application_link), 'Screenshot Name':truncate_for_csv(screenshot_name)})
+            writer.writerow({
+                'Job ID':truncate_for_csv(job_id),
+                'Job Link':truncate_for_csv(job_link),
+                'Resume Tried':truncate_for_csv(resume),
+                'Date listed':fmt_date(date_listed),
+                'Date Tried':fmt_datetime(datetime.now()),
+                'Assumed Reason':truncate_for_csv(error),
+                'Stack Trace':truncate_for_csv(exception),
+                'External Job link':truncate_for_csv(application_link),
+                'Screenshot Name':truncate_for_csv(screenshot_name),
+                'Full Job Description':truncate_for_csv(full_job_description or ""),
+            })
             file.close()
     except Exception as e:
         print_lg("Failed to update failed jobs list!", e)
@@ -2209,9 +2638,47 @@ def submitted_jobs(job_id: str, title: str, company: str, work_location: str, wo
     Function to create or update the Applied jobs CSV file, once the application is submitted successfully
     '''
     questions_formatted = ' | '.join(f"{q[0]}: {q[1]}" for q in questions_list) if questions_list else ''
+    fieldnames = ['Job ID', 'Title', 'Company', 'Work Location', 'Work Style', 'About Job', 'Experience required', 'Skills required', 'HR Name', 'HR Link', 'Resume', 'Search Term', 'Re-posted', 'Date Posted', 'Date Applied', 'Job Link', 'External Job link', 'Questions Found', 'Connect Request']
+    legacy_fieldnames = ['Job ID', 'Title', 'Company', 'Work Location', 'Work Style', 'About Job', 'Experience required', 'Skills required', 'HR Name', 'HR Link', 'Resume', 'Re-posted', 'Date Posted', 'Date Applied', 'Job Link', 'External Job link', 'Questions Found', 'Connect Request']
+
+    # One-time schema repair: old files may miss "Search Term" header while newer rows already include it.
+    # This causes Connect Request values to appear under wrong columns.
+    try:
+        if os.path.exists(file_name):
+            with open(file_name, mode='r', newline='', encoding='utf-8') as existing_csv:
+                rows = list(csv.reader(existing_csv))
+            if rows:
+                header = rows[0]
+                if header != fieldnames:
+                    migrated_rows: list[list[str]] = [fieldnames]
+                    if header == legacy_fieldnames:
+                        for row in rows[1:]:
+                            # Legacy rows had no Search Term. Newer rows might already have 19 fields.
+                            if len(row) == len(legacy_fieldnames):
+                                row = row[:11] + [""] + row[11:]
+                            elif len(row) < len(fieldnames):
+                                row = row + [""] * (len(fieldnames) - len(row))
+                            elif len(row) > len(fieldnames):
+                                row = row[:len(fieldnames)]
+                            migrated_rows.append(row)
+                    else:
+                        # Unknown header drift: preserve data rows best-effort with padding/truncation.
+                        for row in rows[1:]:
+                            if len(row) < len(fieldnames):
+                                row = row + [""] * (len(fieldnames) - len(row))
+                            elif len(row) > len(fieldnames):
+                                row = row[:len(fieldnames)]
+                            migrated_rows.append(row)
+
+                    with open(file_name, mode='w', newline='', encoding='utf-8') as migrated_csv:
+                        writer = csv.writer(migrated_csv)
+                        writer.writerows(migrated_rows)
+                    print_lg('Migrated applied jobs CSV schema to include "Search Term" column.')
+    except Exception as migration_error:
+        print_lg("Applied jobs CSV schema migration skipped due to error.", migration_error)
+
     try:
         with open(file_name, mode='a', newline='', encoding='utf-8') as csv_file:
-            fieldnames = ['Job ID', 'Title', 'Company', 'Work Location', 'Work Style', 'About Job', 'Experience required', 'Skills required', 'HR Name', 'HR Link', 'Resume', 'Search Term', 'Re-posted', 'Date Posted', 'Date Applied', 'Job Link', 'External Job link', 'Questions Found', 'Connect Request']
             writer = csv.DictWriter(csv_file, fieldnames=fieldnames)
             if csv_file.tell() == 0: writer.writeheader()
             writer.writerow({'Job ID':truncate_for_csv(job_id), 'Title':truncate_for_csv(title), 'Company':truncate_for_csv(company), 'Work Location':truncate_for_csv(work_location), 'Work Style':truncate_for_csv(work_style), 
@@ -2349,6 +2816,14 @@ def apply_to_jobs(
                 buffer(3)
                 job_listings = driver.find_elements(By.XPATH, "//li[@data-occludable-job-id]")  
 
+                if not job_listings and (has_no_matching_jobs_banner() or has_suggested_jobs_context()):
+                    print_lg(f'No visible job cards for "{searchTerm}". Skipping to next term.')
+                    break
+
+                if has_no_matching_jobs_banner():
+                    print_lg(f'No matching jobs found for "{searchTerm}". Skipping to next term.')
+                    break
+
             
                 for job in job_listings:
                     if keep_screen_awake: pyautogui.press('shiftright')
@@ -2358,7 +2833,7 @@ def apply_to_jobs(
                         print_lg("\n###############  Daily application limit for Easy Apply is reached!  ###############\n")
                         return pass_total
 
-                    job_id,title,company,work_location,work_style,skip = get_job_main_details(job, blacklisted_companies, rejected_jobs)
+                    job_id,title,company,work_location,work_style,skip,needs_description_relevance_check = get_job_main_details(job, blacklisted_companies, rejected_jobs, searchTerm)
                     
                     if skip: continue
                     # Redundant fail safe check for applied jobs!
@@ -2463,10 +2938,20 @@ def apply_to_jobs(
                     description, experience_required, skip, reason, message = get_job_description()
                     if skip:
                         print_lg(message)
-                        failed_job(job_id, job_link, resume, date_listed, reason, message, "Skipped", screenshot_name)
+                        failed_job(job_id, job_link, resume, date_listed, reason, message, "Skipped", screenshot_name, full_job_description=description)
                         rejected_jobs.add(job_id)
                         skip_count += 1
                         continue
+
+                    if needs_description_relevance_check and not is_description_relevant(description, title, searchTerm):
+                        reason = f'skip_reason=title_uncertain_description_not_relevant, search_term="{searchTerm}"'
+                        print_lg(f'Skipping "{title} | {company}" job ({reason}). Job ID: {job_id}!')
+                        failed_job(job_id, job_link, resume, date_listed, "Balanced relevance check failed", reason, "Skipped", screenshot_name, full_job_description=description)
+                        rejected_jobs.add(job_id)
+                        skip_count += 1
+                        continue
+                    if needs_description_relevance_check:
+                        print_lg(f'Balanced relevance check passed for "{title} | {company}". Job ID: {job_id}!')
 
                     try:
                         skills = extract_skills_from_job_description(description)
@@ -2488,6 +2973,7 @@ def apply_to_jobs(
                             try:
                                 errored = ""
                                 easy_apply_stage = "open-modal"
+                                dismiss_job_search_safety_reminder("easy-apply-open")
                                 modal = find_by_class(driver, "jobs-easy-apply-modal")
                                 # Initial step may already be on questions/review; avoid noisy failure logs.
                                 easy_apply_stage = "initial-next"
@@ -2500,7 +2986,11 @@ def apply_to_jobs(
                                 next_counter = 0
                                 ai_retry_attempted = False
                                 while next_button:
+                                    dismiss_job_search_safety_reminder("easy-apply-loop")
                                     modal = find_by_class(driver, "jobs-easy-apply-modal")
+                                    if detect_daily_easy_apply_limit("easy-apply-modal"):
+                                        print_lg("\n###############  Daily application limit for Easy Apply is reached!  ###############\n")
+                                        return pass_total
                                     next_counter += 1
                                     if next_counter >= 15:
                                         if not ai_retry_attempted:
@@ -2522,6 +3012,9 @@ def apply_to_jobs(
                                     easy_apply_stage = "answer-questions"
                                     questions_list = answer_questions(modal, questions_list, work_location, job_description=description)
                                     if useNewResume and not uploaded: uploaded, resume = upload_resume(modal, active_resume)
+                                    if detect_daily_easy_apply_limit("easy-apply-modal"):
+                                        print_lg("\n###############  Daily application limit for Easy Apply is reached!  ###############\n")
+                                        return pass_total
                                     if find_modal_action_button(modal, "review"):
                                         next_button = False
                                         easy_apply_stage = "review-click"
@@ -2573,6 +3066,9 @@ def apply_to_jobs(
                                     submit_clicked = False
 
                                 if submit_clicked or wait_span_click(driver, "Submit application", 2, scrollTop=True):
+                                    if detect_daily_easy_apply_limit("submit-stage"):
+                                        print_lg("\n###############  Daily application limit for Easy Apply is reached!  ###############\n")
+                                        return pass_total
                                     date_applied = datetime.now()
                                     try:
                                         modal = find_by_class(driver, "jobs-easy-apply-modal")
@@ -2589,6 +3085,9 @@ def apply_to_jobs(
                                     wait_span_click(driver, "Done", 2)
                                     sleep(uniform(8.0, 22.0))
                                 else:
+                                    if detect_daily_easy_apply_limit("submit-not-found"):
+                                        print_lg("\n###############  Daily application limit for Easy Apply is reached!  ###############\n")
+                                        return pass_total
                                     easy_apply_stage = "submit-not-found"
                                     print_lg("Since, Submit Application failed, discarding the job application...")
                                     # if screenshot_name == "Not Available":  screenshot_name = screenshot(driver, job_id, "Failed to click Submit application")
@@ -2739,11 +3238,12 @@ def run(total_runs: int) -> int:
 
         stages: list[dict[str, str | bool]] = []
 
-        # Stage 1: Past 24h under-10 only for France and UK first.
+        # Stage 1: Past 24h under-10 first, then Past 24h all-applicants (France, then UK).
         for country in core:
             stages.append({"country": country, "date": "Past 24 hours", "under10": True})
+            stages.append({"country": country, "date": "Past 24 hours", "under10": False})
 
-        # Stage 2: Past week under-10, then Past week all applicants (France + UK).
+        # Stage 2: Past week under-10, then Past week all-applicants (France, then UK).
         for country in core:
             stages.append({"country": country, "date": "Past week", "under10": True})
             stages.append({"country": country, "date": "Past week", "under10": False})

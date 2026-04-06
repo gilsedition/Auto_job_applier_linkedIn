@@ -298,8 +298,11 @@ def truncate_for_csv(data, max_length: int = 131000, suffix: str = "...[TRUNCATE
     * Returns truncated string if data exceeds max_length
     '''
     try:
-        # Convert data to string
+        # Convert data to string and normalize line breaks for Excel-friendly single-line cells.
         str_data = str(data) if data is not None else ""
+        str_data = str_data.replace("\r\n", " | ").replace("\n", " | ").replace("\r", " | ")
+        str_data = re.sub(r"\s*\|\s*", " | ", str_data)
+        str_data = re.sub(r"\s+", " ", str_data).strip()
         
         # If within limit, return as-is
         if len(str_data) <= max_length:

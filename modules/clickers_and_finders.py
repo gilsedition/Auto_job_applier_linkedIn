@@ -209,7 +209,9 @@ def location_search_click(driver: WebDriver, actions: ActionChains, locationName
 def text_input(actions: ActionChains, textInputEle: WebElement | bool, value: str, textFieldName: str = "Text") -> None | Exception:
     if textInputEle:
         sleep(1)
-        # actions.key_down(Keys.CONTROL).send_keys("a").key_up(Keys.CONTROL).perform()
+        textInputEle.click()
+        textInputEle.send_keys(Keys.CONTROL, "a")
+        textInputEle.send_keys(Keys.DELETE)
         textInputEle.clear()
         textInputEle.send_keys(value.strip())
         sleep(2)
